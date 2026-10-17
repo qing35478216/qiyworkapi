@@ -213,6 +213,8 @@ flowchart LR
 
 ## 快速开始
 
+> 🚀 **想直接跑起来？** 看图文式步骤最少的 [用法说明.md](用法说明.md)（下载 → 启动 → 面板加号 → 接客户端，含 FAQ）。下面是从源码/Docker 部署的完整路径。
+
 ### 环境要求
 
 - **Docker + Docker Compose**（服务端部署方式，镜像内已含低权限用户与全部工具脚本）——或
@@ -375,11 +377,21 @@ curl -s http://localhost:7863/v1/chat/completions \
 | `schedule.activity_enabled` | `true` | 活跃上报总开关 |
 | `schedule.keepalive_enabled` | `true` | token 保活总开关 |
 | `schedule.blackcat_enabled` | `true` | 夜猫子总开关 |
+| `schedule.growth_hours` | `[1]` | 成长任务队列扫描执行时点（Sequential 族每日零点解锁，01:00 自动跑） |
+| `schedule.growth_enabled` | `true` | 成长任务自动排程总开关 |
+| `schedule.balance_refresh_enabled` | `true` | 余额后台周期刷新开关（两次签到时点之间保持 credits 新鲜，解冻语义同签到） |
+| `schedule.balance_refresh_minutes` | `5` | 余额后台刷新周期（分钟）；≤0 回落 5 |
+| `global.enabled` | `true` | global 域路由开关；`false` = 逃生门（纯 CN 锁定，即便 auth 写了 realm=global 也不路由） |
+| `global.chat_base` / `global.billing_base` | 空 | 国际版上游 base 覆盖；空 = 内置默认（`workbuddy.ai`） |
 | `schedule.include_disabled_in_tasks` | `false` | 让**保号类**四任务（签到 / 活跃上报 / token 保活 / 余额刷新）对**已禁用**账号也执行——「禁用」只关选号，不停保号。`false`（默认）保持「禁用的跳过」 |
 | `upstream.timeout_seconds` | `120` | 短 RPC（刷新 / 签到 / 余额 / 模型列表）总时长上限 |
 | `upstream.header_timeout_seconds` | 回落 `timeout_seconds` | 聊天首字节前（响应头）上限 |
 | `upstream.idle_timeout_seconds` | `300` | 聊天流中空闲上限（活跃续命，静默断流） |
 | `upstream.user_agent` | 空 | 出站 User-Agent 覆盖（空 = 现状 `CLI/2.63.2 CodeBuddy/2.63.2`）。官网「使用端」列按出站 UA 服务端归因；官方 WorkBuddy 桌面 UA 为 `WorkBuddy/<version>`，需要时可配 |
+| `upstream.client_version` / `upstream.cli_version` | 空（内置默认） | 出站 UA 的 `WorkBuddy/<ver>` 与 `CLI/<ver>` 段版本（空 = 对齐官方分发包） |
+| `upstream.client_name` | 空 | 用量归属头取值（`X-Product` / `X-IDE-*`）；配 `"WorkBuddy"` 则四头跟随，空 = 旧行为仅 `X-Product: SaaS` |
+| `upstream.device_token` / `upstream.device_token_file` | 空 | 设备风控 Token（`X-Device-Token` 头）全局兜底；每号 auth 文件的 `device_token` 键优先 |
+| `upstream.passthrough_ip` | `false` | 是否透传客户端 IP 给上游（反代安全边界，默认不透传） |
 | `features.sanitize_blacklist_fingerprints` | `true` | 出站请求体黑名单指纹脱敏 |
 | `prompt.mode` | `custom` | 系统提示词模式：`custom` = 网关用自有提示词替换客户端 system；`append` = 开头连续 system/developer 块后插网关提示词（既有消息逐字不动）；`passthrough` = 透传客户端原始 system（降级重试仍切中性提示词） |
 | `prompt.file` | 空 | 提示词文件路径；空 = 内置默认（约 2KB）；路径非空但不可读 → 启动报错 |
@@ -395,6 +407,8 @@ curl -s http://localhost:7863/v1/chat/completions \
 | `pool.breaker_cooldown_max` | `6h` | 熔断指数退避封顶 |
 | `pool.idle_weight_per_hour` | `0.5` | 闲置补偿：每小时未使用 +0.5 权重 |
 | `pool.idle_weight_max` | `5.0` | 闲置补偿权重封顶 |
+| `pool.balance_per_pick` | `0`（关） | 轮询均衡：账号每「落后一轮未被选中」加这么多权重——把请求打散到多账号，防高积分 / 快过期号被集中打爆触发上游排队（6020）；`0` = 纯加权随机（现状行为），`2~5` 即有明显效果 |
+| `pool.balance_max` | `32.0` | 轮询均衡项封顶；≤0 = 未设置回落默认 |
 | `pool.prefer_expiring` | `true` | 快过期积分加权：窗口内仍有有效快过期批次的账号，选号权重 ×3（虚拟实例）；不按到期时间排序、与批次金额无关；是软偏好，弱于会话粘性与模型成本分层（#101） |
 | `pool.expiring_soon` | `168h` | 快过期加权窗口：仅窗口内仍有有效批次的账号命中上述 ×3；窗口开大 → 命中账号变多、偏好被稀释；留空或 `0` 关闭 |
 | `session_sticky.enabled` | `true` | 会话粘性路由开关 |

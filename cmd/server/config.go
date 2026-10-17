@@ -190,7 +190,7 @@ type Config struct {
 		// 高积分号 / 快过期号被集中打爆触发上游排队（6020）。
 		// 默认 0 = 关闭（纯加权随机现状）；设为 2~5 即有明显均衡效果。
 		BalancePerPick float64 `json:"balance_per_pick"`
-		// BalanceMax 均衡项封顶，默认 24.0；<=0 = 不封顶。
+		// BalanceMax 均衡项封顶，默认 32.0；<=0 = 未设置，回落默认。
 		BalanceMax float64 `json:"balance_max"`
 		// PreferExpiring 快过期积分加权开关，默认 true。开启且 expiring_soon 窗口内
 		// 存在有效批次时，该账号选号权重 ×3（虚拟实例，见 pool 路由加权）；
@@ -560,7 +560,7 @@ func (c *Config) normalize() error {
 	if c.Pool.IdleWeightMax <= 0 {
 		c.Pool.IdleWeightMax = 5.0
 	}
-	// 轮询均衡：负值钳 0（关停）；max<=0 视为未设置回落默认 24。
+	// 轮询均衡：负值钳 0（关停）；max<=0 视为未设置回落默认 32.0。
 	if c.Pool.BalancePerPick < 0 {
 		c.Pool.BalancePerPick = 0
 	}
