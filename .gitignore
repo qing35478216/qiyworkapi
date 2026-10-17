@@ -43,6 +43,7 @@ docs/
 !轮询机制.md
 !用法说明.md
 !WorkBuddy一键部署教程.md
+!API参考.md
 !SECURITY.md
 !CHANGELOG.md
 # go:embed 资源，构建必需（勿删）
