@@ -2,7 +2,9 @@
 
 本项目遵循[语义化版本](https://semver.org/lang/zh-CN/)。发版流程：先在 `cmd/server/main.go` 升 `appVersion` 并推送 main，再打同名 `v*` tag，CI 自动构建五平台二进制与多架构镜像并生成 Release。
 
-## [未发布]
+## [1.13.2] - 2026-10-17
+
+安全与工程加固版本。
 
 ### 安全
 
@@ -46,6 +48,7 @@
 
 核心能力：多账号加权轮转（成本分层 / 快过期偏好 / 闲置补偿 / 防惊群）、冷却 / 熔断 / 连败降权三级治理、会话粘性、五类定时任务（签到 / 活跃上报 / 猫猫旅行 / 保活 / 夜猫子）、成长任务一键完成（17/18）、内嵌 Web 管理面板（账号运维 / 用量分析 / 在线改配置 / 日志 / 任务中心）、流式与非流式、推理模型兼容、状态持久化（本地 + 可选 Upstash 镜像）。
 
-[未发布]: https://github.com/qing35478216/qiyworkapi/compare/v1.13.1...HEAD
+[未发布]: https://github.com/qing35478216/qiyworkapi/compare/v1.13.2...HEAD
+[1.13.2]: https://github.com/qing35478216/qiyworkapi/compare/v1.13.1...v1.13.2
 [1.13.1]: https://github.com/qing35478216/qiyworkapi/compare/v1.13.0...v1.13.1
 [1.13.0]: https://github.com/qing35478216/qiyworkapi/releases/tag/v1.13.0
