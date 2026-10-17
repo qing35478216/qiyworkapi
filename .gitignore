@@ -41,6 +41,7 @@ docs/
 !README.md
 !轮询机制.md
 !用法说明.md
+!WorkBuddy一键部署教程.md
 # go:embed 资源，构建必需（勿删）
 !internal/prompt/defaultprompt.md
 
