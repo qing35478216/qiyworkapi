@@ -290,6 +290,29 @@ go build -trimpath -ldflags="-s -w" -o qiyworkapi.exe ./cmd/server
 
 exe 为**单文件自包含**（前端资源已 embed 进二进制），拷到任意 Windows 机器即可运行，只需保证 `auths/`（凭证）与 `data/`（状态）目录可写。
 
+### 方式二·补：macOS / Linux 单文件运行（无需 Docker）
+
+```bash
+# 1) 下载 Release 中对应平台的包并解压
+tar xzf qiyworkapi-v<版本>-darwin-arm64.tar.gz && cd qiyworkapi-v<版本>
+
+# 2) 前台启动（Ctrl+C 停止）；或后台常驻：
+./run.sh start          # 后台守护，日志在 logs/server.log
+./run.sh status         # 查看运行状态
+./run.sh logs           # 跟踪日志
+
+# 3) 浏览器打开面板添加账号
+#    http://127.0.0.1:7863/panel/
+```
+
+首次启动自动生成 `config.json`（含随机 `api_key`，日志打印一次）。开机自启：macOS 用仓库自带 `enable-autostart.sh`（launchd 用户级常驻）；Linux 可参照它写 systemd unit。
+
+> **日志轮转**：`logs/server.log` 会持续增长，长期部署建议配置轮转——
+> Linux 用 logrotate（`/etc/logrotate.d/qiyworkapi`：`weekly` + `rotate 4` + `copytruncate`）；
+> macOS 用自带 newsyslog（`/etc/newsyslog.d/qiyworkapi.conf`）。
+> Docker 部署无此问题：`docker compose logs` 由 daemon 管理，请求归档另有
+> `data/request-logs` 的保留期清理（`logging.request_retention_days`）。
+
 ### 方式三：源码运行（开发调试）
 
 ```bash
@@ -298,6 +321,9 @@ go vet ./...
 go test ./...                      # 完整测试套件
 go run ./cmd/server -config config.json
 ```
+
+> 国内网络模块下载常超时（`proxy.golang.org` 不可达），先设镜像再构建：
+> `export GOPROXY=https://goproxy.cn,direct`
 
 构建全部二进制：
 

@@ -153,9 +153,14 @@ auth = {
         "domain": os.environ["QIYWORKAPI_LOGIN_DOMAIN"],
     },
 }
-with open(os.environ["QIYWORKAPI_LOGIN_AUTH_FILE"], "w") as f:
+auth_path = os.environ["QIYWORKAPI_LOGIN_AUTH_FILE"]
+# 凭证含明文 accessToken/refreshToken，权限必须 0600（与 Go 侧 auth.SaveAtomic 对齐）。
+# os.open 的 mode 仅在新建时生效，已存在文件保持原权限——显式 chmod 兜底两种路径。
+fd = os.open(auth_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+with os.fdopen(fd, "w") as f:
     json.dump(auth, f, indent=1)
-print(f"已保存（{os.environ['QIYWORKAPI_LOGIN_ACTION']}）: {os.environ['QIYWORKAPI_LOGIN_AUTH_FILE']}")
+os.chmod(auth_path, 0o600)
+print(f"已保存（{os.environ['QIYWORKAPI_LOGIN_ACTION']}）: {auth_path}")
 PYEOF
 
 # ─── 重启服务 ────────────────────────────────────────────

@@ -34,8 +34,17 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
+      # gofmt 门禁：输出非空即失败（防格式漂移——改名/手工编辑后对齐列宽易失效）
+      - name: gofmt 检查
+        run: |
+          unformatted=$(gofmt -l .)
+          if [ -n "$unformatted" ]; then
+            echo "::error::以下文件未通过 gofmt（修：gofmt -w .）: $unformatted"
+            exit 1
+          fi
       # ubuntu runner 自带 node → panel 包的 JS 运行时冒烟测试（TestAppJSTopLevelSmoke）会真实执行
-      - run: go test ./...
+      # -race：池调度/会话/Redis 镜像全是并发代码，每次推送都跑竞态检测（需 cgo，runner 自带 gcc）
+      - run: go test -race ./...
 
   build:
     needs: test
@@ -79,7 +88,6 @@ jobs:
       - name: 打包（windows=zip 三件套，其余=tar.gz）
         run: |
           V="${{ steps.ver.outputs.v }}"
-          V="${V%-panel}"   # 文件名不带 -panel 后缀（qiyworkapi-v1.2.3-... 既有惯例）
           case "${{ matrix.goos }}" in
             windows)
               NAME="qiyworkapi-v${V}-windows-amd64.zip"
@@ -112,7 +120,6 @@ jobs:
       - name: tag 与源码版本一致性断言
         run: |
           SRC=$(grep -oP 'appVersion = "\K[^"]+' cmd/server/main.go)
-          SRC="${SRC%-panel}"   # appVersion 带 -panel 后缀，比对前剥掉
           TAG="${GITHUB_REF_NAME#v}"
           if [[ "$GITHUB_REF_NAME" != *-ci ]]; then
             if [[ "$TAG" != "$SRC" ]]; then

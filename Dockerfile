@@ -1,5 +1,6 @@
 # syntax=docker/dockerfile:1
-FROM golang:1.23-alpine AS build
+# 基础镜像与 go.mod 的 go 指令对齐（1.22.x，major.minor 滚动 tag 拿安全补丁）
+FROM golang:1.22-alpine AS build
 WORKDIR /src
 COPY go.mod ./
 RUN go mod download
