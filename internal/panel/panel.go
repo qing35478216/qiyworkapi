@@ -248,6 +248,7 @@ func (p *Panel) overview(w http.ResponseWriter, r *http.Request) {
 		"cooling":         cooling,
 		"disabled":        disabled,
 		"paused":          paused,
+		"auth_dead":       p.cfg.Pool.CountAuthDead(),
 		"in_flight_full":  inFlightFull,
 		"accounts":        p.cfg.Pool.List(),
 		// model_locks 模型级限流全清单（哪些模型不能用、锁了几个号、还要锁多久）：

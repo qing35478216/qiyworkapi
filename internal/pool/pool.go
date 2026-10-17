@@ -415,9 +415,19 @@ func (p *Pool) Remove(uid string) *auth.Auth {
 
 // upsertLocked 更新或插入单个账号；已存在则只换凭证、保留 credits/cooling 状态。
 // 调用方必须已持有 p.mu；Add 与 SyncToDir 共用此 upsert 逻辑。
+//
+// 令牌变更检测（重新登录的恢复路径）：refreshToken 与旧值不同 = 用户刚重新授权
+// （面板添加账号 / login.sh / 导入）——旧会话死亡标记（authDeadUntil）与连续 12153
+// 计数随之清零，新令牌直接回轮换。启动时 SyncToDir 的令牌不变，不误触恢复。
 func (p *Pool) upsertLocked(a *auth.Auth) {
 	if e, ok := p.byUID[a.UID]; ok {
+		tokenChanged := e.a.RefreshToken != a.RefreshToken
 		e.a = a // 保留 credits/cooling 状态
+		if tokenChanged {
+			e.authDeadUntil = time.Time{}
+			e.sessionDeadFails = 0
+			p.dirty.Store(true)
+		}
 		return
 	}
 	p.byUID[a.UID] = &entry{a: a}

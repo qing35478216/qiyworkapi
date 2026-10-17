@@ -20,13 +20,15 @@ func (p *Pool) Disable(uid, reason string) {
 	}
 }
 
-// NoteSessionDead 记录一次 ErrSessionDead（12153）——**不立即禁用**。
+// NoteSessionDead 记录一次 ErrSessionDead（12153 或上游裸 401）——**不立即禁用**。
 // 旧行为一次 12153 即 Disable，但 12153 会被临时性触发（网络抖动/上游闪断/refresh
 // 竞态），一次失败就永久杀号会误杀健康账号（P0-1 侦察：13 个 disabled 号全部 refresh
 // 成功，是历史误判的受害者）。改为连续 sessionDeadThreshold 次才禁用：
 // 计数 +1，达到阈值 → Disable（reason=12153 session dead）并清计数；
 // refresh 成功 / 任意成功 / 手工复活 → ClearSessionDead 清计数。
 // 返回 true 表示本次已达阈值并完成禁用。
+// 同时打第一道闸：authDeadUntil 软暂停选号（见 MarkAuthDead）——3 次约谈的
+// 窗口里，不该每个请求都挨个撞一遍死号。
 // 即使账号已 disabled，计数仍累计并返回 false 前 N-1 次——但 keepalive 会跳过
 // disabled 号，实际只有「已 disabled 后复活且计数未清」这类场景才会走到这里。
 func (p *Pool) NoteSessionDead(uid string) bool {
@@ -37,21 +39,44 @@ func (p *Pool) NoteSessionDead(uid string) bool {
 		return false
 	}
 	e.sessionDeadFails++
+	p.markAuthDeadLocked(e)
 	if e.sessionDeadFails < sessionDeadThreshold {
 		return false
 	}
 	e.sessionDeadFails = 0
+	e.authDeadUntil = time.Time{} // 禁用是终态，软暂停字段随之退役
 	p.disableLocked(e, sessionDeadReason)
 	return true
 }
 
+// markAuthDeadLocked 打/续会话死亡软暂停。调用方必须已持有 p.mu。
+// 续期语义：每次都刷新截止（每次 session-dead 都是新鲜证据，死号不会因
+// 「暂停到期→复探→再死」的循环被无限拖长——每轮只损失一次探测。
+func (p *Pool) markAuthDeadLocked(e *entry) {
+	e.authDeadUntil = time.Now().Add(authDeadPause)
+	p.dirty.Store(true)
+}
+
+// MarkAuthDead 会话死亡软暂停选号（不计数、不禁用）：上游 401/12153 明确拒令牌
+// 时由 chat/keepalive 路径调用。到期自动复探；刷新成功/聊天成功/重新登录清除。
+func (p *Pool) MarkAuthDead(uid string) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if e, ok := p.byUID[uid]; ok {
+		p.markAuthDeadLocked(e)
+	}
+}
+
 // ClearSessionDead 清连续 12153 计数——账号被证明未死的任何时刻调用：
 // refresh 成功（RunKeepaliveNow）、chat 成功（NoteSuccess）、手工复活（ReviveDisabled）。
+// 顺带清除 authDeadUntil 软暂停（证明未死 = 该回轮换）。
 func (p *Pool) ClearSessionDead(uid string) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	if e, ok := p.byUID[uid]; ok {
 		e.sessionDeadFails = 0
+		e.authDeadUntil = time.Time{}
+		p.dirty.Store(true)
 	}
 }
 
@@ -66,6 +91,7 @@ func (p *Pool) ReviveDisabled(uid string) {
 		e.disabled = false
 		e.reason = ""
 		e.sessionDeadFails = 0
+		e.authDeadUntil = time.Time{} // 人工复活 = 人工断言令牌可用，软暂停一并清
 		p.dirty.Store(true)
 	}
 }
@@ -181,6 +207,7 @@ func (p *Pool) NoteSuccess(uid string) {
 		e.breakerUntil = time.Time{}
 		e.softStreak = 0
 		e.sessionDeadFails = 0
+		e.authDeadUntil = time.Time{} // 聊天成功 = 令牌有效，软暂停退役
 		e.consecutiveFails = 0
 		e.degradeUntil = time.Time{}
 		p.dirty.Store(true)
@@ -490,6 +517,22 @@ func (p *Pool) countsDetailedForRealm(realm string) (total, healthy, cooling, di
 	return total, healthy, cooling, disabled, paused, inFlightFull
 }
 
+// CountAuthDead 统计当前处于会话死亡软暂停（authDeadUntil 未到期）的账号数。
+// 与 cooling 分开：软暂停的语义是「上游拒令牌，等重新登录/自动复探」，
+// 混进 cooling 会让人以为是限流冷却（等几分钟就好）而错过重新登录的时机。
+func (p *Pool) CountAuthDead() int {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+	now := time.Now()
+	n := 0
+	for _, e := range p.byUID {
+		if !e.authDeadUntil.IsZero() && now.Before(e.authDeadUntil) {
+			n++
+		}
+	}
+	return n
+}
+
 // ServableNow 报告池当前是否可服务：存在至少一个 healthy 且未占满在途名额的账号。
 // 与 CountsDetailed 的 healthy 口径不同：healthy 只看 disabled/until/breakerUntil（状态机权威判定），
 // 不看 inFlight；ServableNow 额外叠加在途维度，与 chat 的真实可达性（Pick 会跳过 inFlightFull 账号）对齐。
@@ -572,6 +615,8 @@ func (p *Pool) statusOf(uid string, e *entry) Status {
 		InFlight:                 int(e.inFlight.Load()),
 		BreakerFails:             e.fails,
 		BreakerUntil:             e.breakerUntil,
+		AuthDead:                 now.Before(e.authDeadUntil),
+		AuthDeadRemaining:        int64(time.Until(e.authDeadUntil).Seconds()),
 	}
 	if st.Disabled {
 		// 禁用账号透出禁用原因（运维看不到为什么死）。

@@ -63,6 +63,10 @@ func TestClassify(t *testing.T) {
 		{401, `{"code":12153,"msg":"Offline user session not found, rate limit"}`, ErrSessionDead},
 		{401, `Offline user session not found`, ErrSessionDead},
 		{401, `{"code":12153,"msg":"Offline user session not found"}`, ErrSessionDead},
+		// 边缘层裸 401（APISIX/openresty HTML 页，无业务信封）= 会话死亡，
+		// 与 12153 同语义（2026-10-17 事故：上游批量吊销会话后只认信封会假健康）。
+		{401, "<html><head><title>401 Authorization Required</title></head><body><center>openresty</center></body></html>", ErrSessionDead},
+		// 防过宽：带业务信封的 401（9999 bad token）仍是请求侧问题，只换号不杀号。
 		{401, `{"code":9999,"msg":"bad token"}`, ErrClient},
 		{500, `boom`, ErrServer},
 		{503, `unavailable`, ErrServer},

@@ -162,6 +162,10 @@ func (p *Pool) applyAccountsLocked(accounts map[string]stateAccount) {
 			sessionDeadFails:         s.SessionDeadFails,
 			consecutiveFails:         s.ConsecutiveFails,
 		}
+		// 会话死亡软暂停：仅未过期才恢复（与 DegradeUntil 同口径的惰性过滤）。
+		if s.AuthDeadUntil != nil && now.Before(*s.AuthDeadUntil) {
+			e.authDeadUntil = *s.AuthDeadUntil
+		}
 		// 到期快照按当前时刻惰性清洗：已过期、零剩余或超出总余额的脏数据不恢复。
 		if e.creditsExpiring < 0 {
 			e.creditsExpiring = 0
@@ -314,6 +318,11 @@ func (p *Pool) stateOverviewLocked() stateFile {
 		if !e.degradeUntil.IsZero() && now.Before(e.degradeUntil) {
 			u := e.degradeUntil
 			s.DegradeUntil = &u
+		}
+		// 会话死亡软暂停截止：仅未过期才落盘（过期/零值 = 无需暂停，不写）。
+		if !e.authDeadUntil.IsZero() && now.Before(e.authDeadUntil) {
+			u := e.authDeadUntil
+			s.AuthDeadUntil = &u
 		}
 		// 模型级独立冷却：惰性过滤已过期条目（Hits 不落盘，重启后 11102 退避从基数重学）。
 		if len(e.modelCooldowns) > 0 {

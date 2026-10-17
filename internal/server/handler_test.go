@@ -764,7 +764,9 @@ func TestChatAllUnavailableReturns503(t *testing.T) {
 	}
 }
 
-func TestChatSessionDeadDisables(t *testing.T) {
+// TestChatSessionDeadSoftPauses 一次 chat 12153：不立即禁用（3 次约谈防误杀），
+// 但打 auth_dead 软暂停——选号即时跳过，不让后续请求挨个撞死号。
+func TestChatSessionDeadSoftPauses(t *testing.T) {
 	up := newFakeUpstream(t, func(authz string) (int, string, bool) {
 		return 401, `{"code":12153,"msg":"Offline user session not found"}`, false
 	})
@@ -777,8 +779,40 @@ func TestChatSessionDeadDisables(t *testing.T) {
 		t.Errorf("code=%d", rec.Code)
 	}
 	st, _ := p.Status("u1")
-	if !st.Disabled {
-		t.Errorf("account should be disabled: %+v", st)
+	if st.Disabled {
+		t.Errorf("一次 12153 不应立即禁用（3 次约谈）: %+v", st)
+	}
+	if !st.AuthDead {
+		t.Errorf("一次 12153 后应打 auth_dead 软暂停: %+v", st)
+	}
+	// 软暂停期间不再选中（第二个请求直接 503，不再打上游）。
+	rec2 := httptest.NewRecorder()
+	h.ServeHTTP(rec2, req)
+	if rec2.Code != 503 {
+		t.Errorf("second code=%d", rec2.Code)
+	}
+}
+
+// TestChatEdge401SoftPauses 上游边缘层裸 401（APISIX HTML 页，无业务信封）：
+// 与 12153 同语义——auth_dead 软暂停，不禁用（2026-10-17 事故形态）。
+func TestChatEdge401SoftPauses(t *testing.T) {
+	up := newFakeUpstream(t, func(authz string) (int, string, bool) {
+		return 401, `<html><head><title>401 Authorization Required</title></head><body><center>openresty</center></body></html>`, false
+	})
+	p := testPoolWith(&auth.Auth{UID: "u1", AccessToken: "at1", ExpiresAt: 9999999999})
+	h := NewHandler(Config{Pool: p, Upstream: up})
+	req := httptest.NewRequest("POST", "/v1/chat/completions", strings.NewReader(`{"model":"glm-5.2","messages":[]}`))
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != 503 {
+		t.Errorf("code=%d", rec.Code)
+	}
+	st, _ := p.Status("u1")
+	if st.Disabled {
+		t.Errorf("边缘 401 不应立即禁用: %+v", st)
+	}
+	if !st.AuthDead {
+		t.Errorf("边缘 401 应打 auth_dead 软暂停: %+v", st)
 	}
 }
 

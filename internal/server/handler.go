@@ -218,6 +218,9 @@ func (h *Handler) status(w http.ResponseWriter, r *http.Request) {
 	if redisMode == "" {
 		redisMode = "noop"
 	}
+	// auth_dead 会话死亡软暂停计数（上游 401/12153 拒令牌，选号已跳过、到期自动
+	// 复探）。与 cooling 分开：等的是「重新登录」不是「限流恢复」。
+	authDead := h.cfg.Pool.CountAuthDead()
 	// cost_explore 探索台账（issue #136 §5 可观测性）：累计探索事件数 + 各
 	// (域, 模型) 的最近探索时刻（键 "realm|model"）。与 accounts[].model_costs
 	// 行对照即可读出「探索→毕业」全链路（单一事实来源，不做双表示）。零回归只增键。
@@ -236,6 +239,7 @@ func (h *Handler) status(w http.ResponseWriter, r *http.Request) {
 			"global": countsMapFrom(h.cfg.Pool.CountsDetailedForRealm("global")),
 		},
 		"sticky_sessions": sticky,
+		"auth_dead":       authDead,
 		"redis_mode":      redisMode,
 		// model_locks 当前有未过期模型级限流的 (域, 模型) 全清单：账号池视图回答
 		// 「哪些号不能用」，本键回答「哪些模型不能用、锁了几个号、还要锁多久」。
@@ -798,7 +802,10 @@ func (h *Handler) chatCompletions(w http.ResponseWriter, r *http.Request) {
 				lastErr = err
 				var ue *upstream.Error
 				if errors.As(err, &ue) && ue.Kind == upstream.ErrSessionDead {
-					h.cfg.Pool.Disable(acct.UID, "refresh session dead")
+					// 会话死亡：连续 3 次才永久禁用（防误杀，见 NoteSessionDead），
+					// 同时软暂停选号——不让后续每个请求都挨个撞一遍死号。
+					h.cfg.Pool.NoteSessionDead(acct.UID)
+					h.cfg.Pool.MarkAuthDead(acct.UID)
 				} else {
 					h.cfg.Pool.NoteError(acct.UID)
 				}
@@ -1318,7 +1325,8 @@ func isUpstreamTimeout(err error, clientGone bool) bool {
 //     起 · softStreak 指数、封顶 soft_rate_max 的既有 CooldownSoftRate 有界退避。
 //     基数经 jitterDur 抖动（防多账号同相位冷却到期再聚团）。
 //   - ErrNotFound → Cooldown(CoolSoft, notFoundCooldown 固定 60s)：短冷却防雪崩。
-//   - ErrSessionDead → Disable：session 死亡，永久禁用（需人工重登）。
+//   - ErrSessionDead → NoteSessionDead + MarkAuthDead：session 死亡，首次即软暂停
+//     选号（auth_dead），连续 3 次才永久禁用（需人工重登或刷新成功自愈）。
 //   - ErrContentBlocked → 不罚账号；passthrough 首遇触发降级重试，最终仍拦则回 400。
 //   - ErrBadParams → 不罚账号，且与 ErrPromptTooLong/ErrImageInvalid 同待遇：
 //     调用方在轮转循环内即刻 400 透传原文终止（换号必然同样失败）。
@@ -1383,7 +1391,11 @@ func (h *Handler) applyErrorPolicy(uid string, kind upstream.ErrKind, body, mode
 		}
 		h.cfg.Pool.CooldownSoftRate(uid, jitterDur(wafCooldownBase), time.Time{}, "waf 403 block")
 	case upstream.ErrSessionDead:
-		h.cfg.Pool.Disable(uid, "12153 session dead")
+		// 会话死亡（12153 信封或上游裸 401）：连续 3 次才永久禁用（防误杀，
+		// 见 pool.NoteSessionDead），首次即打 auth_dead 软暂停选号，到期自动
+		// 复探；刷新成功 / 聊天成功 / 重新登录（令牌变更）恢复。
+		h.cfg.Pool.NoteSessionDead(uid)
+		h.cfg.Pool.MarkAuthDead(uid)
 	case upstream.ErrNotFound:
 		// 404 短冷却（软冷却），防雪崩。固定 notFoundCooldown，不随 soft_rate 退避：
 		// 偶发路径缺失不是限流信号，不该按限流惩罚升级。

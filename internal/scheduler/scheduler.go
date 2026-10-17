@@ -591,6 +591,9 @@ func (s *Scheduler) RunKeepaliveNow() {
 			log.Printf("keepalive %s: %v", logfmt.Label(st.UID, st.Nickname), err)
 			var ue *upstream.Error
 			if errors.As(err, &ue) && ue.Kind == upstream.ErrSessionDead && !st.Disabled {
+				// 第一道闸：即时软暂停选号（auth_dead，30 分钟到期自动复探）——
+				// 3 次约谈的窗口里不让每个请求都挨个撞一遍死号。
+				s.cfg.Pool.MarkAuthDead(st.UID)
 				if s.cfg.Pool.NoteSessionDead(st.UID) {
 					log.Printf("keepalive %s: 连续 %d 次 12153 session dead — 禁用", logfmt.Label(st.UID, st.Nickname), pool.SessionDeadThreshold())
 				}

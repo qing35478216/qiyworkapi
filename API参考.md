@@ -243,6 +243,7 @@ print(resp.output_text)
 | 字段 | 说明 |
 |---|---|
 | `total` / `healthy` / `cooling` / `disabled` / `in_flight_full` | 账号计数汇总 |
+| `auth_dead` | 会话死亡软暂停中的账号数（上游 401/12153 拒令牌，选号已跳过，30 分钟到期自动复探；等的是「重新登录」不是「限流恢复」） |
 | `realm_totals` | 按 `cn` / `global` 分组的同口径计数 |
 | `sticky_sessions` | 当前粘性会话数 |
 | `redis_mode` | 状态后端模式：`noop`（纯内存）/ `upstash` 等 |
@@ -256,6 +257,7 @@ print(resp.output_text)
 | `uid` / `nickname` / `realm` / `enterprise` | 账号标识与域（`cn` / `global`）、是否企业版 |
 | `credits` / `credits_total` / `credits_expiring` / `credits_earliest_expiry` | 积分余额与到期分布 |
 | `cooling` / `cool_kind` / `cool_remaining_sec` / `until` / `reason` / `soft_streak` | 冷却状态：类型（soft/hard/breaker/degrade 等）、剩余秒数、解除时间、原因、指数退避档位 |
+| `auth_dead` / `auth_dead_remaining_sec` | 会话死亡软暂停：上游 401/12153 拒令牌，选号已跳过；剩余秒数 >0 即暂停中，到期自动复探。需重新登录或等刷新成功恢复 |
 | `disabled` / `disabled_reason` / `paused` | 禁用 / 暂停状态 |
 | `success_count` / `err_total` / `last_success` / `last_err` | 成功失败计数与最近时间 |
 | `rate_limited_models` | 该账号被模型级限流（6004）的模型清单 |

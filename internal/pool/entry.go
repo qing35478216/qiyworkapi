@@ -113,6 +113,12 @@ type Status struct {
 	// 误以为"没记录"，实际是零值被 omitempty 省略）。
 	ConsecutiveFails int       `json:"consecutive_fails"`
 	DegradeUntil     time.Time `json:"degrade_until,omitempty"` // 连败降权截止（非零且未过 = 降权中）
+	// AuthDead 会话死亡软暂停中（authDeadUntil 未到期）：上游 401/12153 明确拒令牌，
+	// 选号已跳过，到期自动复探。面板显示「需重新登录」；不等于 disabled（终态），
+	// 刷新成功 / 重新登录即恢复。
+	AuthDead bool `json:"auth_dead"`
+	// AuthDeadRemaining 软暂停剩余秒数（>0 即暂停中；0 = 未暂停/已到期）。
+	AuthDeadRemaining int64 `json:"auth_dead_remaining_sec,omitempty"`
 	// 运行态（不持久化）：在途请求数 + 熔断器状态。
 	InFlight     int       `json:"in_flight"`
 	BreakerFails int       `json:"breaker_fails"`
@@ -243,6 +249,14 @@ type entry struct {
 	// 「上游持续故障 + 频繁重启」的组合重新学满 5 次；degradeUntil 持久化让降权期
 	// 重启不失忆（与 breakerUntil 同口径）。
 	consecutiveFails int
+	// authDeadUntil 会话死亡软暂停截止：上游以 401/12153 明确拒绝令牌（edge 的
+	// APISIX 401 页或业务的 12153 信封）时打上，选号即时跳过，到期自动复探。
+	// 与 sessionDeadFails 的分工：后者累计到阈值走**永久禁用**（防误杀所以要约 3
+	// 次），本字段是**第一道闸**——第一次确认死亡即暂停选号，避免每个请求都挨个
+	// 撞一遍死号（每次还触发按需 refresh，拖慢整个池）。暂停不是终态：到期回池
+	// 只损失一次探测；保活刷新成功 / 聊天成功 / 重新登录（令牌变更）即清除。
+	// 持久化（stateAccount.AuthDeadUntil）：重启不把死号放回轮换。
+	authDeadUntil time.Time
 	// degradeUntil 连败降权截止：非零且未到期时该账号不参与 normal 选号（临时
 	// 出池）。与冷却/熔断**取更长者不叠加**（healthy 判定是并列或门，任一截止
 	// 未到期即不可选，生效的一定是最远者），到期自动回池，无需显式复位。
@@ -286,6 +300,10 @@ func (e *entry) healthy(now time.Time) bool {
 		return false
 	}
 	if !e.degradeUntil.IsZero() && now.Before(e.degradeUntil) {
+		return false
+	}
+	// 会话死亡软暂停：与冷却并列的独立闸门（任一未到期即不可选）。
+	if !e.authDeadUntil.IsZero() && now.Before(e.authDeadUntil) {
 		return false
 	}
 	return true
@@ -456,6 +474,10 @@ type stateAccount struct {
 	// RetryCount 已熔断次数（指数退避的指数）。持久化以保留"越熔越长"的退避累积——
 	// 重启归零会让反复熔断只从最小退避开始。恢复时若 BreakerUntil 已过期则归零。
 	RetryCount int `json:"retry_count,omitempty"`
+	// AuthDeadUntil 会话死亡软暂停截止（entry.authDeadUntil）。仅未过期才持久化
+	// （落盘/恢复均惰性过滤），避免重启把死号放回轮换；过期/零值不写。指针语义同
+	// BreakerUntil（ omitempty 对非指针 time.Time 零值不生效）。
+	AuthDeadUntil *time.Time `json:"auth_dead_until,omitempty"`
 	// CreditsExpiring 快过期积分子集（credits 的子集）。持久化以保留到期路由
 	// （最早到期路由）的偏好——重启后到下次签到之间不应失忆。
 	CreditsExpiring int64 `json:"credits_expiring"`
@@ -531,6 +553,11 @@ const sessionDeadThreshold = 3
 
 // sessionDeadReason 12153 判定为 session 死亡时的持久化 reason。
 const sessionDeadReason = "12153 session dead"
+
+// authDeadPause 会话死亡软停顿时长：第一次确认死亡即暂停选号这么久，到期自动
+// 复探（真死只损失一次探测，误判/恢复最多等待一个周期）。取 30 分钟：
+// 短于软冷却基数无意义（复探太频），长于熔断基础值会让用户在重新登录前干等。
+const authDeadPause = 30 * time.Minute
 
 // SessionDeadThreshold 暴露连续 12153 的禁用阈值（供 scheduler 日志/运维文档引用）。
 func SessionDeadThreshold() int { return sessionDeadThreshold }

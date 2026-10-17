@@ -507,6 +507,16 @@ func Classify(status int, body string) ErrKind {
 			return ErrSessionDead
 		}
 	}
+	// 上游边缘层裸 401（APISIX/openresty HTML 页，无业务信封）：会话被吊销 /
+	// 令牌失效时，边缘网关直接返回 401 HTML 页，不带业务信封。与带信封的 12153
+	// 同语义（session 死亡）——不识别会把死号当普通 4xx「只换号不标记」，
+	// 每个请求挨个撞一遍死号（2026-10-17 事故：上游批量吊销 10 个号的会话后，
+	// 网关因只认信封而持续假健康）。
+	// 仅认 HTML/空 body：带业务信封的 401（如 9999 bad token）可能是请求侧问题，
+	// 保持下方既有分类（ErrClient 只换号），不升级成杀号。
+	if status == http.StatusUnauthorized && (strings.Contains(lower, "<html") || strings.TrimSpace(body) == "") {
+		return ErrSessionDead
+	}
 	for _, m := range accountFaultMarkers {
 		if strings.Contains(lower, strings.ToLower(m)) || strings.Contains(body, m) {
 			return ErrAccountFault
