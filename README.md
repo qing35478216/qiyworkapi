@@ -241,8 +241,9 @@ docker run -d --name workbuddy2api \
 curl -s http://localhost:7863/healthz
 ```
 
-> **首次发布后须将包设为公开**：GitHub 仓库页 → Packages → `qiyworkapi` →
-> Package settings → Change visibility → Public，否则拉取需要 `docker login ghcr.io`。
+> **镜像可见性**：仓库为 public 时 ghcr 包自动公开（2026-10-17 实测匿名可拉）；
+> 若某次发布遇到私有包，去 仓库页 → Packages → `qiyworkapi` → Package settings →
+> Change visibility → Public。
 >
 > 镜像 tag 规则：`main` 分支推送 `latest` / `main` / `sha-xxxxxx`；打 `v*` tag 额外发布
 > `1.2.3` / `1.2` / `1` 语义化版本；PR 仅构建验证、不推送。
