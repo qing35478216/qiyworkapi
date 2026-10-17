@@ -21,9 +21,9 @@
 
 ```bash
 # 方式 A：下载 Release 压缩包解压（推荐，自带预编译二进制）
-#   https://github.com/qing35478216/qiyworkapi/releases
-tar xzf qiyworkapi-v1.13.0-linux-amd64.tar.gz
-cd qiyworkapi-v1.13.0
+#   https://github.com/qing35478216/qiyworkapi/releases （文件名以页面实际为准）
+tar xzf qiyworkapi-v1.13.1-linux-amd64.tar.gz
+cd qiyworkapi-v1.13.1
 
 # 方式 B：克隆源码
 git clone https://github.com/qing35478216/qiyworkapi.git
