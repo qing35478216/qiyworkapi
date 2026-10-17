@@ -1,7 +1,7 @@
 services:
-  wb2api:
+  qiyworkapi:
     build: .
-    container_name: workbuddy2api
+    container_name: qiyworkapi
     restart: unless-stopped
     # 容器默认以 app 用户（uid 10001）运行。宿主机挂载目录属主不同会导致
     # 「写入 auths/*.json.tmp 失败 permission denied」，三种解法任选：

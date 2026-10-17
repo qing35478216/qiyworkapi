@@ -2,7 +2,7 @@
 # 后台常驻启动：./run.sh [start|stop|restart|status|logs]
 cd "$(dirname "$0")" || exit 1
 
-PID_FILE="$PWD/data/wb2api.pid"
+PID_FILE="$PWD/data/qiyworkapi.pid"
 LOG_FILE="$PWD/logs/server.log"
 mkdir -p data logs
 
@@ -16,7 +16,7 @@ start() {
     return 0
   fi
   export TZ=Asia/Shanghai
-  nohup ./wb2api -config config.json >>"$LOG_FILE" 2>&1 &
+  nohup ./qiyworkapi -config config.json >>"$LOG_FILE" 2>&1 &
   echo $! >"$PID_FILE"
   sleep 1
   echo "已启动，PID=$(cat "$PID_FILE")，日志: $LOG_FILE"

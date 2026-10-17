@@ -97,8 +97,8 @@ func TestLoadFile(t *testing.T) {
 }
 
 func TestEnvOverride(t *testing.T) {
-	t.Setenv("WB2A_LISTEN", ":7777")
-	t.Setenv("WB2A_API_KEY", "envkey")
+	t.Setenv("QIYWORKAPI_LISTEN", ":7777")
+	t.Setenv("QIYWORKAPI_API_KEY", "envkey")
 	c, err := Load("")
 	if err != nil {
 		t.Fatal(err)
@@ -337,8 +337,8 @@ func TestUpstreamExplicitHeaderIdle(t *testing.T) {
 }
 
 func TestUpstreamEnvOverride(t *testing.T) {
-	t.Setenv("WB2A_HEADER_TIMEOUT_SECONDS", "45")
-	t.Setenv("WB2A_IDLE_TIMEOUT_SECONDS", "900")
+	t.Setenv("QIYWORKAPI_HEADER_TIMEOUT_SECONDS", "45")
+	t.Setenv("QIYWORKAPI_IDLE_TIMEOUT_SECONDS", "900")
 	c, err := Load("")
 	if err != nil {
 		t.Fatal(err)
@@ -737,7 +737,7 @@ func TestPromptFileOverride(t *testing.T) {
 
 // TestPromptEnvOverride env 覆盖 prompt.mode 与 prompt.file。
 func TestPromptEnvOverride(t *testing.T) {
-	t.Setenv("WB2A_PROMPT_MODE", "passthrough")
+	t.Setenv("QIYWORKAPI_PROMPT_MODE", "passthrough")
 	c, err := Load("")
 	if err != nil {
 		t.Fatal(err)
@@ -764,7 +764,7 @@ func TestPromptLegacyConfigNoImpact(t *testing.T) {
 	}
 }
 
-// TestUpstreamUserAgentConfig 配置 upstream.user_agent 与 env WB2A_USER_AGENT 均生效，
+// TestUpstreamUserAgentConfig 配置 upstream.user_agent 与 env QIYWORKAPI_USER_AGENT 均生效，
 // 缺省空串保持现状（headers 层回落到 clientUA）。
 func TestUpstreamUserAgentConfig(t *testing.T) {
 	// JSON 配置
@@ -783,7 +783,7 @@ func TestUpstreamUserAgentConfig(t *testing.T) {
 		t.Errorf("default user_agent=%q want empty (err=%v)", c2.Upstream.UserAgent, err)
 	}
 	// env 覆盖
-	t.Setenv("WB2A_USER_AGENT", "EnvAgent/9")
+	t.Setenv("QIYWORKAPI_USER_AGENT", "EnvAgent/9")
 	c3, err := Load("")
 	if err != nil {
 		t.Fatal(err)

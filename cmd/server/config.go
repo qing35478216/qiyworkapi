@@ -306,7 +306,7 @@ func Default() *Config {
 	return c
 }
 
-// Load 从文件读，再用 WB2A_* env 覆盖。
+// Load 从文件读，再用 QIYWORKAPI_* env 覆盖。
 func Load(path string) (*Config, error) {
 	c := Default()
 	if path != "" {
@@ -384,77 +384,77 @@ func WriteDefault(path string) (string, error) {
 }
 
 func applyEnv(c *Config) {
-	if v := os.Getenv("WB2A_LISTEN"); v != "" {
+	if v := os.Getenv("QIYWORKAPI_LISTEN"); v != "" {
 		c.Listen = v
 	}
-	if v := os.Getenv("WB2A_API_KEY"); v != "" {
+	if v := os.Getenv("QIYWORKAPI_API_KEY"); v != "" {
 		c.APIKey = v
 	}
-	if v := os.Getenv("WB2A_AUTH_DIR"); v != "" {
+	if v := os.Getenv("QIYWORKAPI_AUTH_DIR"); v != "" {
 		c.AuthDir = v
 	}
-	if v := os.Getenv("WB2A_STATE_FILE"); v != "" {
+	if v := os.Getenv("QIYWORKAPI_STATE_FILE"); v != "" {
 		c.StateFile = v
 	}
-	if v := os.Getenv("WB2A_SOFT_RATE"); v != "" {
+	if v := os.Getenv("QIYWORKAPI_SOFT_RATE"); v != "" {
 		c.Cooldown.SoftRate = v
 	}
-	if v := os.Getenv("WB2A_SOFT_RATE_MAX"); v != "" {
+	if v := os.Getenv("QIYWORKAPI_SOFT_RATE_MAX"); v != "" {
 		c.Cooldown.SoftRateMax = v
 	}
-	if v := os.Getenv("WB2A_TIMEOUT_SECONDS"); v != "" {
+	if v := os.Getenv("QIYWORKAPI_TIMEOUT_SECONDS"); v != "" {
 		if n, err := strconv.Atoi(v); err == nil {
 			c.Upstream.TimeoutSeconds = n
 		}
 	}
-	if v := os.Getenv("WB2A_HEADER_TIMEOUT_SECONDS"); v != "" {
+	if v := os.Getenv("QIYWORKAPI_HEADER_TIMEOUT_SECONDS"); v != "" {
 		if n, err := strconv.Atoi(v); err == nil {
 			c.Upstream.HeaderTimeoutSeconds = n
 		}
 	}
-	if v := os.Getenv("WB2A_IDLE_TIMEOUT_SECONDS"); v != "" {
+	if v := os.Getenv("QIYWORKAPI_IDLE_TIMEOUT_SECONDS"); v != "" {
 		if n, err := strconv.Atoi(v); err == nil {
 			c.Upstream.IdleTimeoutSeconds = n
 		}
 	}
-	if v := os.Getenv("WB2A_USER_AGENT"); v != "" {
+	if v := os.Getenv("QIYWORKAPI_USER_AGENT"); v != "" {
 		c.Upstream.UserAgent = v
 	}
-	if v := os.Getenv("WB2A_CLIENT_VERSION"); v != "" {
+	if v := os.Getenv("QIYWORKAPI_CLIENT_VERSION"); v != "" {
 		c.Upstream.ClientVersion = v
 	}
-	if v := os.Getenv("WB2A_CLI_VERSION"); v != "" {
+	if v := os.Getenv("QIYWORKAPI_CLI_VERSION"); v != "" {
 		c.Upstream.CliVersion = v
 	}
-	if v := os.Getenv("WB2A_CLIENT_NAME"); v != "" {
+	if v := os.Getenv("QIYWORKAPI_CLIENT_NAME"); v != "" {
 		c.Upstream.ClientName = v
 	}
-	if v := os.Getenv("WB2A_DEVICE_TOKEN"); v != "" {
+	if v := os.Getenv("QIYWORKAPI_DEVICE_TOKEN"); v != "" {
 		c.Upstream.DeviceToken = v
 	}
-	if v := os.Getenv("WB2A_DEVICE_TOKEN_FILE"); v != "" {
+	if v := os.Getenv("QIYWORKAPI_DEVICE_TOKEN_FILE"); v != "" {
 		c.Upstream.DeviceTokenFile = v
 	}
-	if v := os.Getenv("WB2A_PASSTHROUGH_IP"); v != "" {
+	if v := os.Getenv("QIYWORKAPI_PASSTHROUGH_IP"); v != "" {
 		if b, err := strconv.ParseBool(v); err == nil {
 			c.Upstream.PassthroughIP = b
 		}
 	}
-	if v := os.Getenv("WB2A_SANITIZE_FINGERPRINTS"); v != "" {
+	if v := os.Getenv("QIYWORKAPI_SANITIZE_FINGERPRINTS"); v != "" {
 		if b, err := strconv.ParseBool(v); err == nil {
 			c.Features.SanitizeBlacklistFingerprints = b
 		}
 	}
-	if v := os.Getenv("WB2A_PROMPT_MODE"); v != "" {
+	if v := os.Getenv("QIYWORKAPI_PROMPT_MODE"); v != "" {
 		c.Prompt.Mode = v
 	}
-	if v := os.Getenv("WB2A_PROMPT_FILE"); v != "" {
+	if v := os.Getenv("QIYWORKAPI_PROMPT_FILE"); v != "" {
 		c.Prompt.File = v
 	}
-	if v := os.Getenv("WB2A_EXPIRING_SOON"); v != "" {
+	if v := os.Getenv("QIYWORKAPI_EXPIRING_SOON"); v != "" {
 		c.Pool.ExpiringSoon = v
 	}
-	if v := os.Getenv("WB2A_PREFER_EXPIRING"); v != "" {
+	if v := os.Getenv("QIYWORKAPI_PREFER_EXPIRING"); v != "" {
 		if b, err := strconv.ParseBool(v); err == nil {
 			c.Pool.PreferExpiring = b
 		}

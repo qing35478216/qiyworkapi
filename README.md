@@ -230,7 +230,7 @@ mkdir -p auths data && cp config.example.json config.json
 #    建议编辑 config.json 设置 api_key（或留空由程序自动生成随机密钥）
 
 # 2. 拉取并运行
-docker run -d --name workbuddy2api \
+docker run -d --name qiyworkapi \
   -p 7863:7863 -e TZ=Asia/Shanghai \
   -v ./auths:/app/auths -v ./data:/app/data -v ./config.json:/app/config.json \
   ghcr.io/qing35478216/qiyworkapi:latest
@@ -262,7 +262,7 @@ docker compose up -d --build
 
 # 4. 健康检查（无可用账号时返回 503）
 curl -s http://localhost:7863/healthz
-# {"healthy":0,"total":0,"service":"workbuddy2api"}
+# {"healthy":0,"total":0,"service":"qiyworkapi"}
 ```
 
 启动后打开 **`http://localhost:7863/panel/`**，用面板「添加账号」完成登录（见下节）。
@@ -278,11 +278,11 @@ docker compose down             # 停止并移除容器（数据在 ./auths 与 
 ### 方式二：Windows 单文件运行（无需 Docker）
 
 ```powershell
-# 1) 下载 Release 中的 wb2api.exe，或从源码构建
-go build -trimpath -ldflags="-s -w" -o wb2api.exe ./cmd/server
+# 1) 下载 Release 中的 qiyworkapi.exe，或从源码构建
+go build -trimpath -ldflags="-s -w" -o qiyworkapi.exe ./cmd/server
 
 # 2) 直接运行：首次启动自动生成 config.json（含随机 api_key，日志打印一次）
-.\wb2api.exe -config config.json
+.\qiyworkapi.exe -config config.json
 
 # 3) 浏览器打开面板添加账号
 #    http://127.0.0.1:7863/panel/
@@ -302,7 +302,7 @@ go run ./cmd/server -config config.json
 构建全部二进制：
 
 ```bash
-CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o wb2api ./cmd/server
+CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o qiyworkapi ./cmd/server
 CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o signin_bin ./cmd/signin
 CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o login ./cmd/login
 CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o credit ./cmd/credit
@@ -426,9 +426,9 @@ curl -s http://localhost:7863/v1/chat/completions \
 
 ### 环境变量覆盖
 
-加载顺序：JSON 文件 → `WB2A_*` 环境变量（变量非空才覆盖）：
+加载顺序：JSON 文件 → `QIYWORKAPI_*` 环境变量（变量非空才覆盖）：
 
-`WB2A_LISTEN` · `WB2A_API_KEY` · `WB2A_AUTH_DIR` · `WB2A_STATE_FILE` · `WB2A_MAX_BODY_MB` · `WB2A_SOFT_RATE`(duration) · `WB2A_SOFT_RATE_MAX`(duration) · `WB2A_TIMEOUT_SECONDS` · `WB2A_HEADER_TIMEOUT_SECONDS` · `WB2A_IDLE_TIMEOUT_SECONDS` · `WB2A_USER_AGENT` · `WB2A_SANITIZE_FINGERPRINTS`(bool) · `WB2A_PROMPT_MODE` · `WB2A_PROMPT_FILE`
+`QIYWORKAPI_LISTEN` · `QIYWORKAPI_API_KEY` · `QIYWORKAPI_AUTH_DIR` · `QIYWORKAPI_STATE_FILE` · `QIYWORKAPI_MAX_BODY_MB` · `QIYWORKAPI_SOFT_RATE`(duration) · `QIYWORKAPI_SOFT_RATE_MAX`(duration) · `QIYWORKAPI_TIMEOUT_SECONDS` · `QIYWORKAPI_HEADER_TIMEOUT_SECONDS` · `QIYWORKAPI_IDLE_TIMEOUT_SECONDS` · `QIYWORKAPI_USER_AGENT` · `QIYWORKAPI_SANITIZE_FINGERPRINTS`(bool) · `QIYWORKAPI_PROMPT_MODE` · `QIYWORKAPI_PROMPT_FILE`
 
 ## 核心行为语义
 
@@ -609,7 +609,7 @@ WARN: [server] stream ...: saw M native tool call block(s) but repaired none (to
 
 - 一条上报同时点亮 growth 连登 + 解锁 `first_buddy` 任务（领养前置）
 - 每号每天 1 次即可（单时点）：日活跃奖励按天去重，重复上报无额外收益
-- `conversationId` 由网关生成（`wb2api-<ms>`），无需真实会话
+- `conversationId` 由网关生成（`qiyworkapi-<ms>`），无需真实会话
 - 限速：账号间间隔 800ms（与旅行同口径）
 - **streak 自检**：上报成功后回读连登天数（只读 oracle），日志每号一行可 grep：`activity <uid>: streak days=N`。`days=0` 记 **warn**（`report OK but streak.days=0 (silent drop?)`，对应上游「200 但静默丢弃」）；回读失败记 warn 但不影响主流程（上报按天幂等，不重试，只观测）
 - 手动诊断 / 补跑用 `python3 scripts/probe_active.py`（只读探测；写操作默认 dry-run，需 `--yes`）
@@ -712,12 +712,12 @@ http://127.0.0.1:7863/panel/
 `/healthz` 响应示例（200 / 503 同结构，仅状态码与计数变化）：
 
 ```json
-{"healthy": 2, "total": 3, "service": "workbuddy2api"}
+{"healthy": 2, "total": 3, "service": "qiyworkapi"}
 ```
 
-响应同时带 `X-Service: workbuddy2api` 头。这两个身份标识用于区分**本网关**与同端口上可能残留的其他服务——对方即使返回 2xx 也不会带该字段 / 头，宿主探测据此避免"假成功"。
+响应同时带 `X-Service: qiyworkapi` 头。这两个身份标识用于区分**本网关**与同端口上可能残留的其他服务——对方即使返回 2xx 也不会带该字段 / 头，宿主探测据此避免"假成功"。
 
-**宿主健康探测指引**：强校验（推荐）用 `/status` + `api_key`——只有持有正确 `api_key` 的本网关返回 200，其他服务返回 401 / 404；弱校验（不适合持 key 的负载均衡器）用 `/healthz` + `service` 字段判据（`/healthz` 恒无鉴权，`service == "workbuddy2api"` 才算命中本网关）。容器自带 `HEALTHCHECK` 用的就是弱校验（仅进程内自检，够用）。
+**宿主健康探测指引**：强校验（推荐）用 `/status` + `api_key`——只有持有正确 `api_key` 的本网关返回 200，其他服务返回 401 / 404；弱校验（不适合持 key 的负载均衡器）用 `/healthz` + `service` 字段判据（`/healthz` 恒无鉴权，`service == "qiyworkapi"` 才算命中本网关）。容器自带 `HEALTHCHECK` 用的就是弱校验（仅进程内自检，够用）。
 
 ### 流式行为细节
 
@@ -787,7 +787,7 @@ http://127.0.0.1:7863/panel/
 
 多阶段镜像（`golang:1.23-alpine` 构建 → `alpine:3.20` 运行）一次编译全部四个二进制并随镜像分发：
 
-- **wb2api**（主服务）、**signin_bin**、**login**、**credit** + 脚本（`login.sh` / `signin.sh` / `credit.sh` / `scripts/probe_active.py`）
+- **qiyworkapi**（主服务）、**signin_bin**、**login**、**credit** + 脚本（`login.sh` / `signin.sh` / `credit.sh` / `scripts/probe_active.py`）
 - 以 `app` 用户（uid 10001）运行，`app/auths` 与 `app/data` 预建
 - 镜像内默认落 `config.example.json` 作为空配置（不含密钥），生产用挂载卷覆盖 `/app/config.json`
 - 内置 `HEALTHCHECK`（`wget /healthz`，30s 间隔）
@@ -915,7 +915,7 @@ sudo chown -R 10001:10001 ./auths ./data ./config.json
 
 ### 如何让官网「使用端」列显示为 WorkBuddy？
 
-官网「使用端」列按出站请求 UA 服务端归因。配置 `upstream.user_agent: "WorkBuddy/2.x.x"`（或环境变量 `WB2A_USER_AGENT`）即可改写全部出站请求的 UA；默认保持 `CLI/2.63.2 CodeBuddy/2.63.2` 现状（指纹净化考虑，可配而非改死）。
+官网「使用端」列按出站请求 UA 服务端归因。配置 `upstream.user_agent: "WorkBuddy/2.x.x"`（或环境变量 `QIYWORKAPI_USER_AGENT`）即可改写全部出站请求的 UA；默认保持 `CLI/2.63.2 CodeBuddy/2.63.2` 现状（指纹净化考虑，可配而非改死）。
 
 ## 关键断言 ↔ 代码出处
 

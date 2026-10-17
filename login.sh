@@ -8,12 +8,12 @@
 #   1. POST /v2/plugin/auth/state 拿授权 URL（无 PKCE，state 由服务端签发）
 #   2. 你在浏览器打开 URL 完成登录
 #   3. 回到这里按 y → poll 拿 token+uid+nickname → 签到 → 落盘 auths/workbuddy-<uid>.json
-#   4. 重启 workbuddy2api 容器加载新账号
+#   4. 重启 qiyworkapi 容器加载新账号
 set -euo pipefail
 
 cd "$(dirname "$0")"
 AUTH_DIR="./auths"
-CONTAINER="workbuddy2api"
+CONTAINER="qiyworkapi"
 
 mkdir -p "$AUTH_DIR"
 
@@ -77,17 +77,17 @@ EXPIRES_AT=$(( $(date +%s) + EXPIRES_IN ))
 # ─── 签到（CN：POST codebuddy.cn/v2/billing/meter/daily-checkin，幂等不阻塞）───
 # OAuth 返回字段一律通过环境变量传入 Python，并用带引号 heredoc：
 # 昵称/domain/token 等值可含引号或换行，拼进 Python 源码会造成注入。
-WB2A_LOGIN_TOKEN="$TOKEN" \
-WB2A_LOGIN_USER_ID="$USER_ID" \
-WB2A_LOGIN_ENT_ID="$ENT_ID" \
-WB2A_LOGIN_DOMAIN="$DOMAIN" \
+QIYWORKAPI_LOGIN_TOKEN="$TOKEN" \
+QIYWORKAPI_LOGIN_USER_ID="$USER_ID" \
+QIYWORKAPI_LOGIN_ENT_ID="$ENT_ID" \
+QIYWORKAPI_LOGIN_DOMAIN="$DOMAIN" \
 python3 - <<'PYEOF'
 import json, os, urllib.request, urllib.error
 
-token = os.environ["WB2A_LOGIN_TOKEN"]
-user_id = os.environ["WB2A_LOGIN_USER_ID"]
-ent_id = os.environ["WB2A_LOGIN_ENT_ID"]
-domain = os.environ["WB2A_LOGIN_DOMAIN"]
+token = os.environ["QIYWORKAPI_LOGIN_TOKEN"]
+user_id = os.environ["QIYWORKAPI_LOGIN_USER_ID"]
+ent_id = os.environ["QIYWORKAPI_LOGIN_ENT_ID"]
+domain = os.environ["QIYWORKAPI_LOGIN_DOMAIN"]
 
 req = urllib.request.Request(
     "https://www.codebuddy.cn/v2/billing/meter/daily-checkin",
@@ -128,34 +128,34 @@ else
     echo "新账号（uid=${USER_ID}），新增 auth 文件"
     ACTION="新增"
 fi
-WB2A_LOGIN_TOKEN="$TOKEN" \
-WB2A_LOGIN_REFRESH="$REFRESH" \
-WB2A_LOGIN_EXPIRES_AT="$EXPIRES_AT" \
-WB2A_LOGIN_DOMAIN="$DOMAIN" \
-WB2A_LOGIN_USER_ID="$USER_ID" \
-WB2A_LOGIN_ENT_ID="$ENT_ID" \
-WB2A_LOGIN_NICKNAME="$NICKNAME" \
-WB2A_LOGIN_AUTH_FILE="$AUTH_FILE" \
-WB2A_LOGIN_ACTION="$ACTION" \
+QIYWORKAPI_LOGIN_TOKEN="$TOKEN" \
+QIYWORKAPI_LOGIN_REFRESH="$REFRESH" \
+QIYWORKAPI_LOGIN_EXPIRES_AT="$EXPIRES_AT" \
+QIYWORKAPI_LOGIN_DOMAIN="$DOMAIN" \
+QIYWORKAPI_LOGIN_USER_ID="$USER_ID" \
+QIYWORKAPI_LOGIN_ENT_ID="$ENT_ID" \
+QIYWORKAPI_LOGIN_NICKNAME="$NICKNAME" \
+QIYWORKAPI_LOGIN_AUTH_FILE="$AUTH_FILE" \
+QIYWORKAPI_LOGIN_ACTION="$ACTION" \
 python3 - <<'PYEOF'
 import json, os
 
 auth = {
     "account": {
-        "uid": os.environ["WB2A_LOGIN_USER_ID"],
-        "enterpriseId": os.environ["WB2A_LOGIN_ENT_ID"],
-        "nickname": os.environ["WB2A_LOGIN_NICKNAME"],
+        "uid": os.environ["QIYWORKAPI_LOGIN_USER_ID"],
+        "enterpriseId": os.environ["QIYWORKAPI_LOGIN_ENT_ID"],
+        "nickname": os.environ["QIYWORKAPI_LOGIN_NICKNAME"],
     },
     "auth": {
-        "accessToken": os.environ["WB2A_LOGIN_TOKEN"],
-        "refreshToken": os.environ["WB2A_LOGIN_REFRESH"],
-        "expiresAt": int(os.environ["WB2A_LOGIN_EXPIRES_AT"]),
-        "domain": os.environ["WB2A_LOGIN_DOMAIN"],
+        "accessToken": os.environ["QIYWORKAPI_LOGIN_TOKEN"],
+        "refreshToken": os.environ["QIYWORKAPI_LOGIN_REFRESH"],
+        "expiresAt": int(os.environ["QIYWORKAPI_LOGIN_EXPIRES_AT"]),
+        "domain": os.environ["QIYWORKAPI_LOGIN_DOMAIN"],
     },
 }
-with open(os.environ["WB2A_LOGIN_AUTH_FILE"], "w") as f:
+with open(os.environ["QIYWORKAPI_LOGIN_AUTH_FILE"], "w") as f:
     json.dump(auth, f, indent=1)
-print(f"已保存（{os.environ['WB2A_LOGIN_ACTION']}）: {os.environ['WB2A_LOGIN_AUTH_FILE']}")
+print(f"已保存（{os.environ['QIYWORKAPI_LOGIN_ACTION']}）: {os.environ['QIYWORKAPI_LOGIN_AUTH_FILE']}")
 PYEOF
 
 # ─── 重启服务 ────────────────────────────────────────────

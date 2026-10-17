@@ -3,7 +3,7 @@
 # 用法： ./enable-autostart.sh [start|stop|status]
 # 注意：不要在受限沙箱/IDE 内置终端里跑，launchctl 需要真实 GUI 会话权限
 
-LABEL="cn.workbuddy2api"
+LABEL="cn.qiyworkapi"
 PLIST="$HOME/Library/LaunchAgents/$LABEL.plist"
 DOMAIN="gui/$(id -u)"
 

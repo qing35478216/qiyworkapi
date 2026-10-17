@@ -1,5 +1,5 @@
 #!/bin/bash
-# 启动 workbuddy2api 服务（前台运行；守护用 run.sh）
+# 启动 qiyworkapi 服务（前台运行；守护用 run.sh）
 cd "$(dirname "$0")" || exit 1
 
 export TZ=Asia/Shanghai
@@ -11,4 +11,4 @@ if [ ! -f config.json ]; then
   echo "[start] 已生成 config.json，请确认 api_key"
 fi
 
-exec ./wb2api -config config.json
+exec ./qiyworkapi -config config.json

@@ -417,7 +417,7 @@ func (c *Client) MarketExpertList(a *auth.Auth, expertType string) ([]MarketExpe
 // expert_actual_use 等 JOIN 事件的 requestId 必须是该服务端 id——自造 UUID 不计数
 // （客户端 resolveRealRequestId 同款语义，Sunny row 2113 实证）。
 func (c *Client) DesktopChatWithExpert(a *auth.Auth, expertID string) (conversationID, requestID string, err error) {
-	conversationID = fmt.Sprintf("wb2api-conv-%d", time.Now().UnixNano())
+	conversationID = fmt.Sprintf("qiyworkapi-conv-%d", time.Now().UnixNano())
 	body := map[string]any{
 		"model": "fast-model",
 		"messages": []any{
@@ -456,7 +456,7 @@ func (c *Client) DesktopChatWithExpert(a *auth.Auth, expertID string) (conversat
 	if expertID != "" {
 		h.Set("X-Expert-Id", expertID)
 	}
-	if os.Getenv("WB2A_DEBUG_CHAT") != "" {
+	if os.Getenv("QIYWORKAPI_DEBUG_CHAT") != "" {
 		fmt.Printf("[dbg] URL=%s\n", req.URL)
 		for k := range req.Header {
 			fmt.Printf("[dbg] %s: %s\n", k, req.Header.Get(k))
@@ -467,7 +467,7 @@ func (c *Client) DesktopChatWithExpert(a *auth.Auth, expertID string) (conversat
 		return "", "", err
 	}
 	defer resp.Body.Close()
-	if os.Getenv("WB2A_DEBUG_CHAT") != "" {
+	if os.Getenv("QIYWORKAPI_DEBUG_CHAT") != "" {
 		fmt.Printf("[dbg] status=%d enc=%q\n", resp.StatusCode, resp.Header.Get("Content-Encoding"))
 	}
 	if resp.StatusCode != 200 {
@@ -482,7 +482,7 @@ func (c *Client) DesktopChatWithExpert(a *auth.Auth, expertID string) (conversat
 		n, rerr := resp.Body.Read(tmp)
 		if n > 0 {
 			buf = append(buf, tmp[:n]...)
-			if os.Getenv("WB2A_DEBUG_CHAT") != "" {
+			if os.Getenv("QIYWORKAPI_DEBUG_CHAT") != "" {
 				dbg := string(tmp[:n])
 				if len(dbg) > 120 {
 					dbg = dbg[:120]
@@ -497,7 +497,7 @@ func (c *Client) DesktopChatWithExpert(a *auth.Auth, expertID string) (conversat
 				rest := buf[abs+6:]
 				if end := bytes.IndexByte(rest, '"'); end > 0 {
 					id := string(rest[:end])
-					if os.Getenv("WB2A_DEBUG_CHAT") != "" {
+					if os.Getenv("QIYWORKAPI_DEBUG_CHAT") != "" {
 						fmt.Printf("[dbg-id] %q match=%v\n", id, idRegex.MatchString(id))
 					}
 					if idRegex.MatchString(id) {

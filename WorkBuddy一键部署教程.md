@@ -39,10 +39,10 @@ cd qiyworkapi
 ```
 帮我把当前目录的 qiyworkapi 项目部署起来，并用一键部署发布成在线链接：
 
-1. 构建 Linux 二进制（CGO_ENABLED=0 go build -o wb2api ./cmd/server）
+1. 构建 Linux 二进制（CGO_ENABLED=0 go build -o qiyworkapi ./cmd/server）
 2. 准备配置：cp config.example.json config.json，并把 api_key 改成强随机值
-3. 启动命令必须监听沙箱端口：WB2A_LISTEN=:$PORT ./wb2api -config config.json
-   （程序用 WB2A_LISTEN 环境变量指定监听地址，绑定 0.0.0.0）
+3. 启动命令必须监听沙箱端口：QIYWORKAPI_LISTEN=:$PORT ./qiyworkapi -config config.json
+   （程序用 QIYWORKAPI_LISTEN 环境变量指定监听地址，绑定 0.0.0.0）
 4. 冒烟测试：/healthz 和 /panel/ 都要能访问
 5. 一键部署发布成在线链接，确保面板和 /v1 路径都能通过链接访问
 6. 最后把在线链接、面板地址、API Base URL、api_key 汇报给我

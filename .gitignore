@@ -10,6 +10,7 @@ data/
 # Binaries (anchored to repo root only — bare "login"/"credit" would also ignore cmd/login/, cmd/credit/)
 /login
 /credit
+/qiyworkapi
 /wb2api
 /signin_bin
 
@@ -46,7 +47,7 @@ docs/
 !internal/prompt/defaultprompt.md
 
 # Windows binaries
-/wb2api.exe
+/qiyworkapi.exe
 /login.exe
 /credit.exe
 

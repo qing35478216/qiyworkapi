@@ -194,7 +194,7 @@ func fetchUserResource(af *authFile) (remain, used, size int64, packs int, err e
 func main() {
 	pretty := len(os.Args) > 1 && os.Args[1] == "-pretty"
 	authDir := "./auths"
-	if v := os.Getenv("WB2A_AUTH_DIR"); v != "" {
+	if v := os.Getenv("QIYWORKAPI_AUTH_DIR"); v != "" {
 		authDir = v
 	}
 	files, _ := filepath.Glob(filepath.Join(authDir, "workbuddy-*.json"))
