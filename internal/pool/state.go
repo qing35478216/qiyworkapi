@@ -598,7 +598,6 @@ func (p *Pool) statusOf(uid string, e *entry) Status {
 		CreditsEarliestExpiry:    e.creditsEarliestExpiry,
 		CreditsEarliestRemaining: e.creditsEarliestRemaining,
 		Cooling:                  now.Before(e.until) || now.Before(e.breakerUntil),
-		Reason:                   e.reason,
 		Disabled:                 e.disabled,
 		Paused:                   e.paused,
 		SuccessCount:             e.successCount,
@@ -617,6 +616,12 @@ func (p *Pool) statusOf(uid string, e *entry) Status {
 		BreakerUntil:             e.breakerUntil,
 		AuthDead:                 now.Before(e.authDeadUntil),
 		AuthDeadRemaining:        int64(time.Until(e.authDeadUntil).Seconds()),
+	}
+	// reason 只在账号确实处于惩罚态时透出：软冷却自然到期后 e.reason 仍会保留
+	// （只有 Revive / 禁用才清），若无条件输出，面板会永久显示「429 rate limit」
+	// 这类过期标签，与实际健康状态不符。
+	if st.Cooling || st.Disabled || now.Before(e.degradeUntil) || now.Before(e.authDeadUntil) {
+		st.Reason = e.reason
 	}
 	if st.Disabled {
 		// 禁用账号透出禁用原因（运维看不到为什么死）。
