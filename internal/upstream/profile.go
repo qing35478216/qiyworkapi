@@ -27,8 +27,11 @@ func (c *Client) FetchAccountProfile(a *auth.Auth) (string, error) {
 	req.Header.Set("Authorization", "Bearer "+a.AccessTokenValue())
 	req.Header.Set("Accept", "application/json, text/plain, */*")
 	req.Header.Set("x-client-platform", "web")
-	req.Header.Set("Origin", "https://www.workbuddy.cn")
-	req.Header.Set("Referer", "https://www.workbuddy.cn/profile/account-settings")
+	// 前端域跟随 webBase（CN workbuddy.cn / global 账号签发域），与请求 URL 同域。
+	web := c.webBase(a)
+	req.Header.Set("Origin", web)
+	req.Header.Set("Referer", web+"/profile/account-settings")
+	req.Header.Set("X-Domain", c.xDomainFor(a, web))
 	if ua := c.userAgent(a); ua != "" {
 		req.Header.Set("User-Agent", ua)
 	}

@@ -138,7 +138,7 @@ func (c *Client) ReportDesktopEvent(a *auth.Auth, events ...DesktopEvent) error 
 	req.Header.Set("Accept", "application/json, text/plain, */*")
 	req.Header.Set("Content-Type", "application/json;charset=UTF-8")
 	req.Header.Set("User-Agent", c.rpcUAFor(a))
-	req.Header.Set("X-Domain", c.desktopBase(a))
+	req.Header.Set("X-Domain", c.xDomainFor(a, c.desktopBase(a)))
 	req.Header.Set("X-Product", "SaaS")
 	req.Header.Set("X-Request-ID", deriveID(a, "req")+fmt.Sprintf("%d", time.Now().UnixNano()%1e6))
 	if a.UID != "" {
@@ -416,7 +416,7 @@ func (c *Client) MarketExpertList(a *auth.Auth, expertType string) ([]MarketExpe
 	req.Header.Set("Authorization", "Bearer "+a.AccessTokenValue())
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("User-Agent", c.rpcUAFor(a))
-	req.Header.Set("X-Domain", c.chatBase(a))
+	req.Header.Set("X-Domain", c.xDomainFor(a, c.chatBase(a)))
 	req.Header.Set("X-Product", "SaaS")
 	if a.UID != "" {
 		req.Header.Set("X-User-Id", a.UID)
@@ -464,7 +464,7 @@ func (c *Client) DesktopChatWithExpert(a *auth.Auth, expertID string) (conversat
 	h.Set("Content-Type", "application/json")
 	h.Set("Accept", "text/event-stream")
 	h.Set("User-Agent", c.rpcUAFor(a))
-	h.Set("X-Domain", c.chatBase(a))
+	h.Set("X-Domain", c.xDomainFor(a, c.chatBase(a)))
 	h.Set("X-Product", "SaaS")
 	h.Set("X-User-Id", a.UID)
 	h.Set("X-Conversation-ID", conversationID)

@@ -230,13 +230,15 @@ func (c *Client) ClaimReward(a *auth.Auth, taskCode string) (credit, energy int6
 	if err != nil {
 		return 0, 0, err
 	}
-	// Web 端请求头形状（对照浏览器实际请求）：Origin/Referer 指向 workbuddy.cn 成长中心，
-	// 带 x-client-platform: web 标记来源端。
+	// Web 端请求头形状（对照浏览器实际请求）：Origin/Referer 指向成长中心所在前端域，
+	// 带 x-client-platform: web 标记来源端。前端域跟随 webBase（CN workbuddy.cn /
+	// global 账号签发域），不能与请求 URL 分属两域。
+	web := c.webBase(a)
 	req.Header.Set("Authorization", "Bearer "+a.AccessTokenValue())
 	req.Header.Set("Accept", "application/json, text/plain, */*")
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Origin", "https://www.workbuddy.cn")
-	req.Header.Set("Referer", "https://www.workbuddy.cn/profile/growth-center")
+	req.Header.Set("Origin", web)
+	req.Header.Set("Referer", web+"/profile/growth-center")
 	req.Header.Set("x-client-platform", "web")
 	if ua := c.userAgent(a); ua != "" {
 		req.Header.Set("User-Agent", ua)
@@ -248,9 +250,7 @@ func (c *Client) ClaimReward(a *auth.Auth, taskCode string) (credit, energy int6
 		req.Header.Set("X-Enterprise-Id", a.EnterpriseID)
 		req.Header.Set("X-Tenant-Id", a.EnterpriseID)
 	}
-	if d := a.DomainValue(); d != "" {
-		req.Header.Set("X-Domain", d)
-	}
+	req.Header.Set("X-Domain", c.xDomainFor(a, web))
 
 	data, err := c.doJSON(req)
 	if err != nil {

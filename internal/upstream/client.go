@@ -22,6 +22,7 @@ import (
 
 	"github.com/qing35478216/qiyworkapi/internal/auth"
 	"github.com/qing35478216/qiyworkapi/internal/logfmt"
+	"github.com/qing35478216/qiyworkapi/internal/loginsite"
 )
 
 // ErrKind 错误分类，pool 据此决定冷却时长。
@@ -682,8 +683,9 @@ type Client struct {
 	// （Web 成长中心用；CLI 域 copilot.tencent.com 的同名路径返回 400）。
 	WebBaseCN string
 
-	// ChatBaseGlobal / BillingBaseGlobal 国际版（global realm）上游 base。
-	// 空 = 缺省默认 https://www.workbuddy.ai（D5）。
+	// ChatBaseGlobal / BillingBaseGlobal 国际版（global realm）上游 base 显式覆盖。
+	// 空 = 按 auth 文件 domain 选（codebuddy.ai / workbuddy.ai 两套主机名），
+	// domain 也缺失才回落 https://www.workbuddy.ai（见 globalBaseOf）。
 	ChatBaseGlobal    string
 	BillingBaseGlobal string
 
@@ -720,23 +722,43 @@ func (c *Client) chatHTTP() *http.Client {
 	return c.HTTP
 }
 
-// defaultGlobalBase 缺省 global base（D5：config 未覆盖时默认 workbuddy.ai）。
+// defaultGlobalBase 缺省 global base：**auth 文件没有 domain 时**的兜底（手写扁平
+// auth / 老凭证）。本项目 auth/state 登录链路签发域是 workbuddy.ai，故默认保持它；
+// 有 domain 的账号一律按 domain 选（见 globalBaseOf），不靠这个常量猜。
 const defaultGlobalBase = "https://www.workbuddy.ai"
 
-// globalChatBase 生效的 global chat base：Client.ChatBaseGlobal 非空取之，否则默认。
-func (c *Client) globalChatBase() string {
-	if c.ChatBaseGlobal != "" {
-		return c.ChatBaseGlobal
+// globalBaseOf 生效的 global 域 base，优先级：
+//
+//	config 显式覆盖（ChatBaseGlobal/BillingBaseGlobal）> auth 文件 domain 推出的官方主机 > 默认
+//
+// 为什么按 domain 而不是按 realm：国际域有两套主机名并存（workbuddy.ai 旧桌面端 /
+// codebuddy.ai 官方 CLI 国际站），同一后端但签发域不同。只按 realm 恒定选一个主机，
+// 必然把一半账号打到非其签发域。
+//
+// 实测口径（2026-11-28）：同一 global token 分别打 workbuddy.ai / codebuddy.ai 的
+// billing get-user-resource，均 200 且数据一致——两域确实同后端、跨域不会被立刻拒。
+// 但请求主机与签发域长期不一致本身就是可判别形态（真机从不跨域），且上游一旦加域
+// 校验即整批失效，故仍按 domain 选。
+//
+// domain 为空/非国际域才回落默认——回落是"没信息不猜"，不是"猜一个"。
+func (c *Client) globalBaseOf(override, domain string) string {
+	if override != "" {
+		return override
+	}
+	if b := loginsite.BaseForDomain(domain); b != "" {
+		return b
 	}
 	return defaultGlobalBase
 }
 
-// globalBillingBase 生效的 global billing base：Client.BillingBaseGlobal 非空取之，否则默认。
-func (c *Client) globalBillingBase() string {
-	if c.BillingBaseGlobal != "" {
-		return c.BillingBaseGlobal
-	}
-	return defaultGlobalBase
+// globalChatBase 生效的 global chat base（优先级见 globalBaseOf）。
+func (c *Client) globalChatBase(a *auth.Auth) string {
+	return c.globalBaseOf(c.ChatBaseGlobal, a.DomainValue())
+}
+
+// globalBillingBase 生效的 global billing base（优先级见 globalBaseOf）。
+func (c *Client) globalBillingBase(a *auth.Auth) string {
+	return c.globalBaseOf(c.BillingBaseGlobal, a.DomainValue())
 }
 
 // globalOn 报告账号是否路由到 global 上游：GlobalEnabled 开且账号 Realm()==global。
@@ -785,9 +807,11 @@ func (c *Client) checkinMeterPaths(a *auth.Auth) []string {
 	return []string{dailyCheckinPathV2}
 }
 
+// chatBase 账号的 chat 出站 base：global 按 domain 选国际站主机（见 globalBaseOf），
+// CN 恒 ChatBaseCN。
 func (c *Client) chatBase(a *auth.Auth) string {
 	if c.globalOn(a) {
-		return c.globalChatBase()
+		return c.globalChatBase(a)
 	}
 	return c.ChatBaseCN
 }
@@ -850,16 +874,17 @@ func realmKey(realm string) string {
 
 func (c *Client) billingBase(a *auth.Auth) string {
 	if c.globalOn(a) {
-		return c.globalBillingBase()
+		return c.globalBillingBase(a)
 	}
 	return c.BillingBaseCN
 }
 
-// webBase 返回官网域（任务领奖类接口；未注入时回落默认）。
-// realm 感知：global 账号切国际站 workbuddy.ai，CN 用 workbuddy.cn。
+// webBase 返回官网域（任务领奖/上报类接口；未注入时回落默认）。
+// realm 感知：global 账号按 domain 走对应国际站主机（codebuddy.ai / workbuddy.ai），
+// CN 用 workbuddy.cn。
 func (c *Client) webBase(a *auth.Auth) string {
 	if c.globalOn(a) {
-		return defaultGlobalBase
+		return c.globalChatBase(a)
 	}
 	if c.WebBaseCN != "" {
 		return c.WebBaseCN

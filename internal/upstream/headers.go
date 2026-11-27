@@ -34,8 +34,7 @@ const (
 	// originRefererCN 国内版前端域。旧值 codebuddy.cn 是 CodeBuddy CLI 时代遗留；
 	// 2026-10 桌面端全量抓包（661 条带 Origin/Referer 的请求）里一律 www.workbuddy.cn。
 	// codebuddy.cn 只是 billing 的 API 主机名，从不当 Origin。
-	originRefererCN     = "https://www.workbuddy.cn"
-	originRefererGlobal = "https://www.workbuddy.ai"
+	originRefererCN = "https://www.workbuddy.cn"
 )
 
 // clientVersion 生效的 WorkBuddy 客户端版本：Client.ClientVersion 非空则取之，
@@ -75,11 +74,14 @@ func uaBrandFor(a *auth.Auth) string {
 	return "WorkBuddy"
 }
 
-// originRefererFor 按账号 realm 返回 Origin/Referer 基础域：
-// global → https://www.workbuddy.ai；cn（含全局开关未开）→ https://www.workbuddy.cn。
-func originRefererFor(a *auth.Auth) string {
+// originRefererFor 按账号签发域返回 Origin/Referer 基础域：
+//
+//	global → https://<auth domain>（codebuddy.ai / workbuddy.ai 两套主机名各随其域，
+//	         与 X-Domain 自洽——发 workbuddy.ai 而账号在 codebuddy.ai 就是跨域声明）
+//	cn     → https://www.workbuddy.cn（661 条真机请求一律此域）
+func (c *Client) originRefererFor(a *auth.Auth) string {
 	if a != nil && a.IsGlobal() {
-		return originRefererGlobal
+		return "https://" + c.xDomainFor(a, c.chatBase(a))
 	}
 	return originRefererCN
 }
@@ -191,6 +193,31 @@ func (c *Client) injectAccountStableHeaders(req *http.Request, a *auth.Auth) {
 	req.Header.Set("X-Session-ID", deriveAccountStableID(a.UID, "session"))
 }
 
+// hostOnly 从 URL 或裸域取主机名。X-Domain 真机恒为裸主机名（`www.workbuddy.cn`），
+// 不带协议/路径；auth 文件 domain 可能是手写带协议形态（"https://www.workbuddy.ai/"），
+// 出站前统一收敛，避免把 URL 塞进头里这种一眼假的形态。
+func hostOnly(s string) string {
+	s = strings.TrimSpace(s)
+	s = strings.TrimPrefix(s, "https://")
+	s = strings.TrimPrefix(s, "http://")
+	if i := strings.IndexByte(s, '/'); i >= 0 {
+		s = s[:i]
+	}
+	return s
+}
+
+// xDomainFor 出站 X-Domain 取值：真机语义是「哪个前端在调用」，恒为 auth 文件落盘的
+// 主机名（登录时上游签发域）。domain 缺失（手写扁平 auth）才回落本次 base 的主机名——
+// 缺头或猜错域都会被按域校验的上游识别成异常客户端。
+func (c *Client) xDomainFor(a *auth.Auth, base string) string {
+	if a != nil {
+		if d := strings.TrimSpace(a.DomainValue()); d != "" {
+			return hostOnly(d)
+		}
+	}
+	return hostOnly(base)
+}
+
 // CommonHeaders 设置所有 API 共享的请求头。
 func (c *Client) CommonHeaders(req *http.Request, a *auth.Auth) {
 	req.Header.Set("Content-Type", "application/json")
@@ -198,7 +225,7 @@ func (c *Client) CommonHeaders(req *http.Request, a *auth.Auth) {
 	// chat 流式路径在 ChatHeaders 覆盖为 event-stream。
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("X-Requested-With", "XMLHttpRequest")
-	origin := originRefererFor(a)
+	origin := c.originRefererFor(a)
 	req.Header.Set("Origin", origin)
 	req.Header.Set("Referer", origin+"/")
 	req.Header.Set("User-Agent", c.userAgent(a))
@@ -284,8 +311,7 @@ func (c *Client) ChatHeaders(req *http.Request, a *auth.Auth, clientIP string, m
 	// 安全红线：绝不在 chat 请求里携带 X-Refresh-Token。
 	// 企业与域头按 realm 分发：CN 走既有分支（EnterpriseID/Domain 原样透传，缺省 X-No-*）；
 	// global 账号由 injectGlobalChatHeaders 统一覆写为国际客户端形态
-	// （X-No-Enterprise-Id=1 声明无企业 + X-Domain=www.workbuddy.ai 声明国际版域），
-	// 且不回退 X-Domain 到登录会话原值——对齐 intl 项目出站头。
+	// （X-No-Enterprise-Id=1 声明无企业 + X-Domain=<auth 文件 domain> 声明国际版域）。
 	if a != nil && !a.IsGlobal() {
 		if a.EnterpriseID != "" {
 			req.Header.Set("X-Enterprise-Id", a.EnterpriseID)
@@ -293,7 +319,7 @@ func (c *Client) ChatHeaders(req *http.Request, a *auth.Auth, clientIP string, m
 			req.Header.Set("X-No-Enterprise-Id", "1")
 		}
 		if d := a.DomainValue(); d != "" {
-			req.Header.Set("X-Domain", d)
+			req.Header.Set("X-Domain", hostOnly(d))
 		} else {
 			req.Header.Set("X-No-Department-Info", "1")
 		}
@@ -313,7 +339,9 @@ func (c *Client) ChatHeaders(req *http.Request, a *auth.Auth, clientIP string, m
 // injectGlobalChatHeaders global 账号（无企业 ID）的 chat 专属声明头，对齐 intl 项目
 // （ANALYSIS-global-chat-solutions.md）：
 //   - X-No-Enterprise-Id: 1  个人账号无企业 ID，显式声明（避免上游按缺省/可疑判定）
-//   - X-Domain: www.workbuddy.ai  显式声明国际版域（与 Origin/Referer 同域）
+//   - X-Domain: <auth 文件 domain>  声明国际版域。**不硬编码 workbuddy.ai**：
+//     国际域有 workbuddy.ai / codebuddy.ai 两套主机名，账号落在哪套由签发域决定；
+//     真机从不跨域声明，发错域是可判别形态。
 //
 // 仅 global realm 注入；CN 账号走既有 X-No-Department-Info 等分支，零回归。
 func (c *Client) injectGlobalChatHeaders(req *http.Request, a *auth.Auth) {
@@ -321,7 +349,7 @@ func (c *Client) injectGlobalChatHeaders(req *http.Request, a *auth.Auth) {
 		return
 	}
 	req.Header.Set("X-No-Enterprise-Id", "1")
-	req.Header.Set("X-Domain", "www.workbuddy.ai")
+	req.Header.Set("X-Domain", c.xDomainFor(a, c.chatBase(a)))
 }
 
 // injectConversationHeaders 注入官方客户端会话头族（issue #35 后台聚合）。
@@ -462,9 +490,8 @@ func (c *Client) BillingHeaders(req *http.Request, a *auth.Auth) {
 		req.Header.Set("X-Enterprise-Id", a.EnterpriseID)
 		req.Header.Set("X-Tenant-Id", a.EnterpriseID)
 	}
-	if d := a.DomainValue(); d != "" {
-		req.Header.Set("X-Domain", d)
-	}
+	// X-Domain：真机 billing 域同样声明前端域；domain 缺失回落本次 base 主机名。
+	req.Header.Set("X-Domain", c.xDomainFor(a, c.billingBase(a)))
 	// 设备风控头：billing 域（report/travel/balance/checkin）同样注入。
 	c.injectDeviceToken(req, a)
 }
@@ -498,9 +525,7 @@ func (c *Client) RefreshHeaders(req *http.Request, a *auth.Auth) {
 	if a.UID != "" {
 		req.Header.Set("X-User-Id", a.UID)
 	}
-	if d := a.DomainValue(); d != "" {
-		req.Header.Set("X-Domain", d)
-	}
+	req.Header.Set("X-Domain", c.xDomainFor(a, c.chatBase(a)))
 }
 
 // newTraceID 生成 32 hex 纯随机请求 ID（与官方 X-Request-ID 同形：无毫秒前缀）。

@@ -94,7 +94,7 @@ func (a *Auth) RefreshTokenValue() string {
 // globalEnabled 全局开关：global realm 是否路由（D5 双保险）。
 // 默认开启（与 config global.enabled 缺省 true 一致）：Realm() 正常按显式 realm/
 // domain 判定 global/cn。显式 SetGlobalEnabled(false)（config "enabled": false）关闭
-// → 逃生门：纯 CN 部署，即便 auth 文件写了 realm=global 或 domain 为 .workbuddy.ai
+// → 逃生门：纯 CN 部署，即便 auth 文件写了 realm=global 或 domain 为国际域
 // 也恒判 cn——「关了才锁死」的单一闸口集中收敛在 Realm()/IsGlobal() 里。
 var globalEnabled atomic.Bool
 
@@ -106,8 +106,9 @@ func SetGlobalEnabled(enabled bool) { globalEnabled.Store(enabled) }
 // GlobalEnabled 报告 global realm 路由开关当前状态（测试/运维观测）。
 func GlobalEnabled() bool { return globalEnabled.Load() }
 
-// Realm 返回账号的归一化域：显式 Realm=="global" 或 domain 后缀 .workbuddy.ai → "global"，
-// 否则 "cn"。显式 global 优先于 domain 回落（D1）。
+// Realm 返回账号的归一化域：显式 Realm=="global" 或 domain 落在国际域
+// （workbuddy.ai / codebuddy.ai 两家族）→ "global"，否则 "cn"。
+// 显式 global 优先于 domain 回落（D1）。
 // 全局开关 SetGlobalEnabled(false) 时恒 "cn"（逃生门：纯 CN 锁定，不影响默认行为）。
 // 空 realm + 空 domain → "cn"（老 CN 凭证零回归）。
 func (a *Auth) Realm() string {
@@ -209,11 +210,19 @@ func (a *Auth) IsGlobal() bool { return a.Realm() == "global" }
 // 无需加锁——Realm() 加锁是因为 realm/Domain 会被 RefreshToken 在锁内改写。
 func (a *Auth) IsEnterprise() bool { return strings.TrimSpace(a.EnterpriseID) != "" }
 
-// isGlobalDomain 判定 domain 是否指向 www.workbuddy.ai 家族。
-// 同时接受裸域 workbuddy.ai 与任意子域（HasSuffix("www.workbuddy.ai") 或裸域本身）。
+// isGlobalDomain 判定 domain 是否指向国际域（workbuddy.ai / codebuddy.ai 两家族）。
+// 同时接受裸域与任意子域。
+//
+// codebuddy.ai 是官方 CLI 国际站域（product.json externalDomain: www.codebuddy.ai），
+// 与 workbuddy.ai 同后端但落盘 domain 不同。只认 workbuddy.ai 会把官方 CLI 登录的
+// 国际号判成 cn，出站直接打错域（401）。注意与国内 billing 主机名 codebuddy.cn
+// 毫无关系——后缀判定天然区分（.ai ≠ .cn）。
 func isGlobalDomain(d string) bool {
 	d = strings.ToLower(strings.TrimSpace(d))
-	return d == "workbuddy.ai" || strings.HasSuffix(d, ".workbuddy.ai")
+	if d == "workbuddy.ai" || strings.HasSuffix(d, ".workbuddy.ai") {
+		return true
+	}
+	return d == "codebuddy.ai" || strings.HasSuffix(d, ".codebuddy.ai")
 }
 
 // NeedsRefresh 报告 token 是否将在 within 内过期（或已过期/无 expiry）。

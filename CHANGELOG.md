@@ -6,6 +6,7 @@
 
 ### 修复
 
+- **global 出站 base 按 auth 文件 domain 选，不再按 realm 恒定猜**：国际域有 `workbuddy.ai`（旧桌面端）与 `codebuddy.ai`（官方 CLI 国际站）两套主机名指向同一后端，此前 global 账号一律打 `www.workbuddy.ai`，`codebuddy.ai` 签发的凭证会被打到非其签发域。现按「config 覆盖 > auth domain 推导 > 默认」选 base，chat/billing/web（report、成长任务、注册激活）全部同口径；`isGlobalDomain` 同步认 `codebuddy.ai` 家族（否则这类账号会被判成 cn，直接错域）。`X-Domain` 与 `Origin/Referer` 同步改为账号签发域（此前 global 硬编码 `www.workbuddy.ai`，且 `/v2/report`、market expert、`/v2/user-asset` 把带协议的 URL 当成了 `X-Domain` 值）。实测（2026-11-28）：同一 global token 打两域 billing 均 200 且数据一致，两域确为同一后端
 - **登录链路逐头复核（第二轮）**：`auth/token` 去掉真机没有的 `X-Domain`，`auth/state` 补 `X-Custom-Channel-Id: unknown` 与可选 `X-Device-Token`（有值才发，不伪造）；授权链接补 `version`（两版）与 `loginSessionId`（仅 CN）——缺 `version` 时授权页按旧客户端渲染并把旧版本编进 risk-context；`auth/token`/`login/account` 按官方码表分流：`11217/12151` 视为 pending 继续轮询（此前 12151「token 已签发、账号信息落库中」会被判失败并丢弃 token，重登又撞 10 分钟错峰窗口），`12005/11212/11216` 立刻终态报错；面板 `realm` 大小写归一、非法值 400（不再静默回落 cn）；token 刷新请求体改为真机的 2 字节 `{}`，补齐 `Accept`/`X-Product`/旧 AT `Authorization`/`X-Request-ID`/`X-User-Id`/`X-Domain` 与 `X-No-Authorization` 哨兵
 
 ### 新增

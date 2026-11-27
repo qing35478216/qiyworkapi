@@ -24,26 +24,25 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/qing35478216/qiyworkapi/internal/loginsite"
 )
 
 const billingBaseCN = "https://www.codebuddy.cn"
 
-// billingBaseGlobal 国际版计费域。global 账号打 CN 域会得到 401：
-// www.codebuddy.cn 不认 workbuddy.ai 的 token（实测 401，workbuddy.ai 同 token 为 code=0）。
-const billingBaseGlobal = "https://www.workbuddy.ai"
-
-// billingBaseFor 按账号 realm 选择计费域。
+// billingBaseFor 按账号 realm/domain 选择计费域。
 //
-// 判定口径与 internal/auth.Realm() 一致：显式 realm=global 或 domain 落在
-// workbuddy.ai 家族，都按国际版处理。cmd/credit 早先对所有账号硬编码 CN 域，
+// global 分支必须按 domain 选主机：国际域有 codebuddy.ai / workbuddy.ai 两套主机名
+// （官方 CLI 国际站 / 旧桌面端，同后端），与 internal/upstream.globalBaseOf 同口径——
+// 两边不一致会让面板与 CLI 报出不同余额。显式 realm=global 而 domain 缺失时回落
+// workbuddy.ai（本项目登录链路签发域）。cmd/credit 早先对所有账号硬编码 CN 域，
 // 导致 global 账号余额查询恒返回 401（面板显示的是池内缓存值，不是实时的）。
 func billingBaseFor(af *authFile) string {
-	if strings.EqualFold(strings.TrimSpace(af.Auth.Realm), "global") {
-		return billingBaseGlobal
+	if b := loginsite.BaseForDomain(af.Auth.Domain); b != "" {
+		return b
 	}
-	d := strings.ToLower(strings.TrimSpace(af.Auth.Domain))
-	if d == "workbuddy.ai" || strings.HasSuffix(d, ".workbuddy.ai") {
-		return billingBaseGlobal
+	if strings.EqualFold(strings.TrimSpace(af.Auth.Realm), "global") {
+		return loginsite.BaseGlobalWorkBuddy
 	}
 	return billingBaseCN
 }
@@ -123,7 +122,7 @@ func fetchUserResource(af *authFile) (remain, used, size int64, packs int, err e
 	base := billingBaseFor(af)
 	// global 域无 /v2 前缀（与 internal/upstream 的 billingMeterPaths 同口径）。
 	path := "/v2/billing/meter/get-user-resource"
-	if base == billingBaseGlobal {
+	if base != billingBaseCN {
 		path = "/billing/meter/get-user-resource"
 	}
 	req, err := http.NewRequest(http.MethodPost, base+path, bytes.NewReader(body))

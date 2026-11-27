@@ -49,8 +49,13 @@ func TestClaimRewardWebEndpoint(t *testing.T) {
 	if gotPlatform != "web" {
 		t.Errorf("x-client-platform=%q want web", gotPlatform)
 	}
-	if !strings.Contains(gotReferer, "workbuddy.cn") {
-		t.Errorf("Referer=%q 应指向 workbuddy.cn", gotReferer)
+	// 前端域跟随 webBase（真实部署 CN → https://www.workbuddy.cn；测试注入本地替身）。
+	// 关键是不能落回 CLI 域（copilot.tencent.com）——那是领奖长期 400 的根因。
+	if want := srv.URL + "/profile/growth-center"; gotReferer != want {
+		t.Errorf("Referer=%q want %q（成长中心前端域须与请求 base 同域）", gotReferer, want)
+	}
+	if strings.Contains(gotReferer, "copilot.tencent.com") {
+		t.Errorf("Referer=%q 不得落回 CLI 域", gotReferer)
 	}
 }
 

@@ -48,7 +48,11 @@ func TestRealmDomainFallback(t *testing.T) {
 		{"www.workbuddy.ai", "global"},
 		{"workbuddy.ai", "global"},
 		{"sub.workbuddy.ai", "global"},
-		{"www.codebuddy.cn", "cn"},
+		// 官方 CLI 国际站域：同后端两套主机名，落盘 domain 不同，必须同样判 global。
+		{"www.codebuddy.ai", "global"},
+		{"codebuddy.ai", "global"},
+		{"api.codebuddy.ai", "global"},
+		{"www.codebuddy.cn", "cn"}, // 国内 billing 域，与 .ai 无关
 		{"", "cn"},
 	}
 	for _, c := range cases {
@@ -264,6 +268,8 @@ func TestResolveRealm(t *testing.T) {
 		{"cn", "www.workbuddy.ai", "cn"},         // 显式优先：global domain 也写 cn
 		{"", "www.workbuddy.ai", "global"},       // 缺省按 domain 推断
 		{"", "workbuddy.ai", "global"},
+		{"", "www.codebuddy.ai", "global"}, // 官方 CLI 国际站域
+		{"", "codebuddy.ai", "global"},
 		{"", "codebuddy.cn", "cn"},
 		{"", "", "cn"}, // 空 domain → cn（老 CN 凭证零回归）
 	}

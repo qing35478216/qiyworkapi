@@ -415,7 +415,7 @@ func mergeEffortDefaults(primary, secondary map[string]string) map[string]string
 
 // globalModelsOnce 单端点探测。2xx + 解析出非空名单 → (names, infos, nil)；否则 (nil, nil, err)。
 func (c *Client) globalModelsOnce(a *auth.Auth, path string) ([]string, []ModelInfo, error) {
-	url := c.chatBase(a) + path // 按 realm 切 base：global 账号 → global base
+	url := c.chatBase(a) + path // 按 domain 切 base：global 账号 → 其签发域主机
 	req, err := http.NewRequest(http.MethodGet, url, nil)
 	if err != nil {
 		return nil, nil, err

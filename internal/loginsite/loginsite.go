@@ -68,14 +68,50 @@ var (
 	}
 	siteGlobal = Site{
 		Realm:     "global",
-		API:       "https://www.workbuddy.ai",
-		Origin:    "https://www.workbuddy.ai",
+		API:       BaseGlobalWorkBuddy,
+		Origin:    BaseGlobalWorkBuddy,
 		Platform:  "workbuddy-ai",
 		UserAgent: "workbuddy-ai/" + ClientVersionGlobal + " workbuddy-ai/" + ClientVersionGlobal + " CLI/" + BuiltinCLIGlobal,
 		Domain:    "www.workbuddy.ai",
 		Version:   ClientVersionGlobal,
 	}
 )
+
+// 官方 global 域主机。国际域有**两套主机名并存**，指向同一后端：
+//
+//	www.codebuddy.ai   官方 CLI 国际站（product.json externalDomain，新登录签发域）
+//	www.workbuddy.ai   桌面端国际版（旧主机名，本项目 auth/state 当前签发域）
+//
+// 所以 global 出站 base 不能按 realm 恒定选一个——必须按 auth 文件落盘的 domain 选，
+// 否则一半账号会被打到非其签发域。实测（2026-11-28）：两域同后端，同一 token 跨域
+// billing 也是 200，但主机与签发域不一致属可判别形态，且加域校验后会整批失效。
+const (
+	BaseGlobalOfficial  = "https://www.codebuddy.ai"
+	BaseGlobalWorkBuddy = "https://www.workbuddy.ai"
+)
+
+// BaseForDomain 按 auth 文件 domain 返回 global 域上游 base；非国际域/空返回 ""。
+//
+//	*.codebuddy.ai → BaseGlobalOfficial
+//	*.workbuddy.ai → BaseGlobalWorkBuddy
+//	其它/空        → ""（调用方回落配置或默认值，不猜域）
+//
+// 容忍手写 auth 带协议/尾斜杠（"https://www.workbuddy.ai/"），统一剥成裸域再判。
+func BaseForDomain(domain string) string {
+	d := strings.ToLower(strings.TrimSpace(domain))
+	d = strings.TrimPrefix(d, "https://")
+	d = strings.TrimPrefix(d, "http://")
+	if i := strings.IndexByte(d, '/'); i >= 0 {
+		d = d[:i]
+	}
+	switch {
+	case d == "codebuddy.ai" || strings.HasSuffix(d, ".codebuddy.ai"):
+		return BaseGlobalOfficial
+	case d == "workbuddy.ai" || strings.HasSuffix(d, ".workbuddy.ai"):
+		return BaseGlobalWorkBuddy
+	}
+	return ""
+}
 
 // For 按 realm 返回站点定义；空/未知/非法 → 国内站（零回归）。
 func For(realm string) Site {
