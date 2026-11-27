@@ -267,14 +267,14 @@ func DecorateAuthURL(raw string, s Site, nonce, sessionID string) string {
 	}
 	q := u.Query()
 	var add []string
-	if s.Version != "" && q.Get("version") == "" {
+	if s.Version != "" && !q.Has("version") {
 		add = append(add, "version="+url.QueryEscape(s.Version))
 	}
 	if s.Platform == "workbuddy" {
-		if sessionID != "" && q.Get("loginSessionId") == "" {
+		if sessionID != "" && !q.Has("loginSessionId") {
 			add = append(add, "loginSessionId="+url.QueryEscape(sessionID))
 		}
-		if nonce != "" && q.Get("ww_device_nonce") == "" {
+		if nonce != "" && !q.Has("ww_device_nonce") {
 			add = append(add, "ww_device_nonce="+url.QueryEscape(nonce))
 		}
 	}

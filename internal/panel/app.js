@@ -1141,6 +1141,7 @@ function startAddLogin() {
     $('addUrl').textContent = r.url;
     $('addPick').hidden = true; // 选域锁定（会话已按该域发起）
     $('addLoad').hidden = true; $('addReady').hidden = false;
+    if ($('addPoll')) $('addPoll').innerHTML = '<span class="dots">等待授权完成，自动检测中</span>';
     $('btnStartLogin').hidden = true;
     $('btnCopyUrl').hidden = false; $('btnOpenUrl').hidden = false;
     loginTimer = setInterval(pollLogin, 3000);
