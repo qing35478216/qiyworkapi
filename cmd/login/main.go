@@ -2,18 +2,16 @@
 //
 // 两个子命令，由 login.sh 顺序驱动：
 //
-//	login [--realm=cn|global] url   → POST /v2/plugin/auth/state?platform=CLI 拿 state+authUrl，
-//	                                  state 落 /tmp/qiyworkapi-login-state.json，stdout 打印授权 URL
+//	login [--realm=cn|global] url   → POST /v2/plugin/auth/state?platform=workbuddy
+//	                                  （global 为 workbuddy-ai）拿 state+authUrl，
+//	                                  state 落 /tmp/qiyworkapi-login-state.json，
+//	                                  stdout 打印补齐 version/loginSessionId 的授权 URL
 //	login [--realm=cn|global] poll  → 读 state，GET /v2/plugin/auth/token?state= 一次，
 //	                                  成功再 GET /v2/plugin/login/account?state= 拿 uid/nickname，
 //	                                  stdout 打印完整 token+account JSON（含 realm 键）
 //
-// --realm 默认 cn。按 realm 切换上游端点与 Origin/Referer：
-//
-//	cn     → https://copilot.tencent.com（Origin: https://www.codebuddy.cn）
-//	global → https://www.workbuddy.ai（Origin: https://www.workbuddy.ai）
-//
-// state 落盘带 realm，poll 读回校验与命令行 --realm 一致（防混域）。
+// 端点、platform、UA 与头族全部来自 internal/loginsite（与面板共用同一份口径），
+// 本文件只做流程编排。state 落盘带 realm，poll 读回校验与命令行 --realm 一致（防混域）。
 // 无 PKCE（workbuddy 设备流由服务端签发 state）。
 package main
 
@@ -21,6 +19,7 @@ import (
 	"bufio"
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -34,15 +33,6 @@ import (
 	auth2 "github.com/qing35478216/qiyworkapi/internal/auth"
 	"github.com/qing35478216/qiyworkapi/internal/loginguard"
 	"github.com/qing35478216/qiyworkapi/internal/loginsite"
-)
-
-// 上游常量：CN → copilot.tencent.com（Origin 为 codebuddy.cn）；global → www.workbuddy.ai
-// （base 与 Origin/Referer 同域）。端点 URL 由 realmConfig 按 realm 动态拼出，不再硬编码。
-const (
-	upstreamBaseCN      = "https://copilot.tencent.com"
-	upstreamBaseGlobal  = "https://www.workbuddy.ai"
-	originRefererCN     = "https://www.codebuddy.cn"
-	originRefererGlobal = "https://www.workbuddy.ai"
 )
 
 // stateFile 登录 state 落盘路径（var 便于测试替换临时文件）
@@ -106,25 +96,6 @@ func ensureLoginAllowed() {
 // exitFunc 供测试替换（默认 os.Exit；测试持临时替换为 panic 以进程内捕获 fatal）。
 var exitFunc = os.Exit
 
-// realmConfig 按 realm 返回上游 base 与 Origin/Referer origin：global →
-// (www.workbuddy.ai, www.workbuddy.ai)；cn/非法/缺省 → (copilot.tencent.com, codebuddy.cn)。
-func realmConfig(realm string) (base, origin string) {
-	if realm == realmGlobal {
-		return upstreamBaseGlobal, originRefererGlobal
-	}
-	return upstreamBaseCN, originRefererCN
-}
-
-// commonHeaders 为历史调用点保留的兼容包装：按 origin 推断 realm 后返回站点头族。
-// 新代码应直接用 loginsite.For(realm) 的 StateHeaders/TokenHeaders/AccountHeaders。
-func commonHeaders(origin string) map[string]string {
-	realm := realmCN
-	if origin == originRefererGlobal {
-		realm = realmGlobal
-	}
-	return loginsite.For(realm).StateHeaders()
-}
-
 // apiEnvelope 与 main.go:429-433 一致
 type apiEnvelope struct {
 	Code int             `json:"code"`
@@ -133,14 +104,12 @@ type apiEnvelope struct {
 }
 
 // doJSON 与 oauth.go:33-66 一致：{code,msg,data} 信封，code!=0 → error。
-// headers 为站点出站头族（loginsite 提供）；nil 时回落 CN 站点头。
+// headers 为站点出站头族（loginsite 提供）；业务错误返回 *loginsite.EnvelopeError，
+// 调用方按官方码表区分 pending / 终态。
 func doJSON(client *http.Client, method, fullURL string, headers map[string]string, body io.Reader) (json.RawMessage, int, error) {
 	req, err := http.NewRequest(method, fullURL, body)
 	if err != nil {
 		return nil, 0, err
-	}
-	if headers == nil {
-		headers = commonHeaders(originRefererCN)
 	}
 	for k, v := range headers {
 		req.Header.Set(k, v)
@@ -152,7 +121,7 @@ func doJSON(client *http.Client, method, fullURL string, headers map[string]stri
 	defer resp.Body.Close()
 	raw, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode >= 400 {
-		return nil, resp.StatusCode, fmt.Errorf("http_error: upstream %d", resp.StatusCode)
+		return nil, resp.StatusCode, &loginsite.EnvelopeError{Status: resp.StatusCode}
 	}
 	if resp.StatusCode >= 300 {
 		return nil, resp.StatusCode, fmt.Errorf("http_error: upstream redirect %d", resp.StatusCode)
@@ -162,7 +131,7 @@ func doJSON(client *http.Client, method, fullURL string, headers map[string]stri
 		return nil, resp.StatusCode, fmt.Errorf("parse failed: %w", err)
 	}
 	if env.Code != 0 {
-		return nil, resp.StatusCode, fmt.Errorf("code=%d msg=%s", env.Code, env.Msg)
+		return nil, resp.StatusCode, &loginsite.EnvelopeError{Code: env.Code, Msg: env.Msg, Status: resp.StatusCode}
 	}
 	return env.Data, resp.StatusCode, nil
 }
@@ -254,13 +223,14 @@ func validateRealmMatch(stateRealm, cliRealm string) error {
 	return nil
 }
 
-// runURL 执行 url 子命令：向 upstreamBase 的 state 端点 POST 取授权 URL，
-// state 落盘（带 realm），stdout 打印 authURL。out 接 stdout；stateFile 为落盘路径
-// （可注入临时文件便于测试）。空 realm 视为缺省（调用方已归一）。
-func runURL(base, origin, realm, statePath string, client *http.Client, out io.Writer) {
+// runURL 执行 url 子命令：向站点 state 端点 POST 取授权 URL，
+// state 落盘（带 realm），stdout 打印补齐真机参数的 authURL。out 接 stdout；
+// stateFile 为落盘路径（可注入临时文件便于测试）。空 realm 视为缺省（调用方已归一）。
+func runURL(realm, statePath string, client *http.Client, out io.Writer) {
 	ensureLoginAllowed()
 	site := loginsite.For(realm)
-	data, _, err := doJSON(client, http.MethodPost, base+"/v2/plugin/auth/state?platform="+site.Platform, site.StateHeaders(), bytes.NewReader([]byte("{}")))
+	epState, _, _, _ := site.Endpoints()
+	data, _, err := doJSON(client, http.MethodPost, epState, site.StateHeaders(loginsite.DeviceToken()), bytes.NewReader([]byte("{}")))
 	if err != nil {
 		fatal("auth state failed: %v", err)
 	}
@@ -271,6 +241,8 @@ func runURL(base, origin, realm, statePath string, client *http.Client, out io.W
 	if err := json.Unmarshal(data, &st); err != nil || st.State == "" || st.AuthURL == "" {
 		fatal("auth state: missing state or authUrl")
 	}
+	// 与面板同口径：补 version（两版都加）+ loginSessionId（仅 CN）+ 设备 nonce（有则加）。
+	st.AuthURL = loginsite.DecorateAuthURL(st.AuthURL, site, loginsite.DeviceNonce(), loginsite.NewLoginSessionID())
 	raw, _ := json.Marshal(loginState{State: st.State, Realm: realm})
 	if err := os.WriteFile(statePath, raw, 0o600); err != nil {
 		fatal("write state: %v", err)
@@ -278,10 +250,13 @@ func runURL(base, origin, realm, statePath string, client *http.Client, out io.W
 	fmt.Fprintln(out, st.AuthURL)
 }
 
-// runPoll 执行 poll 子命令：读 state 文件（realm 校验），向 upstreamBase 的 token 端点
-// GET 一次，成功再 GET login/account（带 Bearer），stdout 打印完整 token+account JSON。
-// statePath 可注入临时文件便于测试。
-func runPoll(base, origin, realm, statePath string, client *http.Client, out io.Writer) {
+// runPoll 执行 poll 子命令：读 state 文件（realm 校验），向站点 token 端点 GET 一次，
+// 成功再 GET login/account（带 Bearer），stdout 打印完整 token+account JSON。
+//
+// 错误按官方码表分流：11217/12151 是 pending（继续等/稍后重跑 poll），
+// 12005/11212/11216 是终态（立刻报错，不让用户白等）；其余按网络/上游故障处理。
+// state 文件只在成功后删除——pending 时保留，避免重登撞错峰窗口。
+func runPoll(realm, statePath string, client *http.Client, out io.Writer) {
 	raw, err := os.ReadFile(statePath)
 	if err != nil {
 		fatal("read state: %v (先跑 login url)", err)
@@ -295,10 +270,20 @@ func runPoll(base, origin, realm, statePath string, client *http.Client, out io.
 		fatal("%v", err)
 	}
 	site := loginsite.For(realm)
-	// handlePollLogin (oauth.go:108-162)：auth/token 是权威登录状态端点，
-	// pending 时业务 code 非 0（"login ing"），完成时 code=0 + token bundle
-	tokRaw, status, errTok := doJSON(client, http.MethodGet, base+"/v2/plugin/auth/token?state="+ls.State, site.TokenHeaders(), nil)
+	_, epToken, epAcct, _ := site.Endpoints()
+	// auth/token 是权威登录状态端点：pending 时业务 code 非 0（11217），
+	// 完成时 code=0 + token bundle。
+	tokRaw, status, errTok := doJSON(client, http.MethodGet, epToken+ls.State, site.TokenHeaders(), nil)
 	if errTok != nil {
+		var env *loginsite.EnvelopeError
+		if errors.As(errTok, &env) {
+			if loginsite.CodeFatal(env.Code) {
+				fatal("登录被上游拒绝（code=%d）：%s", env.Code, env.Msg)
+			}
+			if loginsite.CodePending(env.Code) {
+				fatal("登录未完成（code=%d）：请先在浏览器完成登录，再重跑 poll（state 已保留）", env.Code)
+			}
+		}
 		if status == 0 || status >= 500 {
 			fatal("token endpoint error: %v", errTok)
 		}
@@ -319,8 +304,22 @@ func runPoll(base, origin, realm, statePath string, client *http.Client, out io.
 		EnterpriseID string `json:"enterpriseId"`
 		Nickname     string `json:"nickname"`
 	}
-	if acctRaw, _, errAcct := doJSON(client, http.MethodGet, base+"/v2/plugin/login/account?state="+ls.State, site.AccountHeaders(tok.AccessToken), nil); errAcct == nil {
-		_ = json.Unmarshal(acctRaw, &acct)
+	acctRaw, _, errAcct := doJSON(client, http.MethodGet, epAcct+ls.State, site.AccountHeaders(tok.AccessToken), nil)
+	if errAcct != nil {
+		var env *loginsite.EnvelopeError
+		if errors.As(errAcct, &env) {
+			if loginsite.CodeFatal(env.Code) {
+				fatal("登录被上游拒绝（code=%d）：%s", env.Code, env.Msg)
+			}
+			if env.Code == loginsite.CodeRetryFetchAccount {
+				fatal("token 已签发，账号信息仍在落库（code=12151）：请等 1-2 分钟后重跑 `./login poll`（state 已保留，不要重新 url）")
+			}
+		}
+		fatal("获取账号信息失败：%v（state 已保留，可稍后重跑 poll）", errAcct)
+	}
+	_ = json.Unmarshal(acctRaw, &acct)
+	if acct.UID == "" {
+		fatal("账号信息缺少 uid（state 已保留，可稍后重跑 poll）")
 	}
 	// 记录成功登录，供下一次 url 计算错峰窗口（与面板共用 data/login-history.json）。
 	if err := cliGuard().Record(acct.UID, auth2.ResolveRealm(realm, tok.Domain)); err != nil {
@@ -377,14 +376,12 @@ func main() {
 	jar, _ := cookiejar.New(nil)
 	client := &http.Client{Timeout: 30 * time.Second, Jar: jar}
 
-	base, origin := realmConfig(realm)
-
 	switch rest[0] {
 	case "url":
-		runURL(base, origin, realm, stateFile, client, os.Stdout)
+		runURL(realm, stateFile, client, os.Stdout)
 
 	case "poll":
-		runPoll(base, origin, realm, stateFile, client, os.Stdout)
+		runPoll(realm, stateFile, client, os.Stdout)
 
 	case "realm":
 		// 交互式选域（login.sh 无 --realm 传参且 stdin 为 tty 时调用）。

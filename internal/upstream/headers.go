@@ -3,10 +3,13 @@
 package upstream
 
 import (
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
+	"fmt"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/qing35478216/qiyworkapi/internal/auth"
 	"github.com/qing35478216/qiyworkapi/internal/session"
@@ -467,12 +470,45 @@ func (c *Client) BillingHeaders(req *http.Request, a *auth.Auth) {
 }
 
 // RefreshHeaders refresh 端点专属头（X-Refresh-Token 只允许出现在这里）。
+//
+// 真机逐头核对（CN 5.11.3，refresh 高频调用，身份错位比登录更频繁暴露）：
+// Accept 用宽松值（不是 CommonHeaders 的 application/json）、X-Product: SaaS、
+// 旧 access token 与 X-Refresh-Token **同时**携带（与 chat 相反）、
+// X-Request-ID / X-User-Id / X-Domain 齐全；无 AT 时发 X-No-Authorization 哨兵。
 func (c *Client) RefreshHeaders(req *http.Request, a *auth.Auth) {
 	c.CommonHeaders(req, a)
+	// Accept 用客户端值（CommonHeaders 发的是收窄后的 application/json）。
+	req.Header.Set("Accept", "application/json, text/plain, */*")
+	// X-Product: SaaS —— 真机 refresh 必带。
+	req.Header.Set("X-Product", "SaaS")
 	req.Header.Set("X-Refresh-Token", a.RefreshToken)
 	if a.EnterpriseID != "" {
 		req.Header.Set("X-Enterprise-Id", a.EnterpriseID)
 	}
 	// X-Auth-Refresh-Source 对齐官方客户端 refresh 渠道标识 "plugin"（D3）。
 	req.Header.Set("X-Auth-Refresh-Source", "plugin")
+	// Authorization：真机 refresh 同时带旧 access token 与 refresh token。
+	if at := a.AccessTokenValue(); at != "" {
+		req.Header.Set("Authorization", "Bearer "+at)
+	} else {
+		req.Header.Set("X-No-Authorization", "true")
+	}
+	// X-Request-ID / X-User-Id / X-Domain：真机三头齐全。
+	req.Header.Set("X-Request-ID", newTraceID())
+	if a.UID != "" {
+		req.Header.Set("X-User-Id", a.UID)
+	}
+	if d := a.DomainValue(); d != "" {
+		req.Header.Set("X-Domain", d)
+	}
+}
+
+// newTraceID 生成 32 hex 纯随机请求 ID（与官方 X-Request-ID 同形：无毫秒前缀）。
+func newTraceID() string {
+	var b [16]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		// 熵源故障：仍恒 32 hex、不空串（与 loginsite.NewTraceID 同策略）。
+		return fmt.Sprintf("%032x", time.Now().UnixNano())
+	}
+	return hex.EncodeToString(b[:])
 }

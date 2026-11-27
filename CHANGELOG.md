@@ -4,6 +4,10 @@
 
 ## [未发布]
 
+### 修复
+
+- **登录链路逐头复核（第二轮）**：`auth/token` 去掉真机没有的 `X-Domain`，`auth/state` 补 `X-Custom-Channel-Id: unknown` 与可选 `X-Device-Token`（有值才发，不伪造）；授权链接补 `version`（两版）与 `loginSessionId`（仅 CN）——缺 `version` 时授权页按旧客户端渲染并把旧版本编进 risk-context；`auth/token`/`login/account` 按官方码表分流：`11217/12151` 视为 pending 继续轮询（此前 12151「token 已签发、账号信息落库中」会被判失败并丢弃 token，重登又撞 10 分钟错峰窗口），`12005/11212/11216` 立刻终态报错；面板 `realm` 大小写归一、非法值 400（不再静默回落 cn）；token 刷新请求体改为真机的 2 字节 `{}`，补齐 `Accept`/`X-Product`/旧 AT `Authorization`/`X-Request-ID`/`X-User-Id`/`X-Domain` 与 `X-No-Authorization` 哨兵
+
 ### 新增
 
 - **出站身份按 realm 对齐官方分发包（2026-11 口径）**：CN `5.11.3` / 内置 CLI `2.176.0`，global `5.9.4` / `2.165.0`（旧实现统一 5.5.4 / 2.137.1，落后两个大版本）。UA 第二段 global 由 `WorkBuddy AI`（带空格，官方从不产生）改为真实的 `workbuddy-ai`；CN 业务 Origin 由 `codebuddy.cn`（CodeBuddy CLI 时代遗留）改为 `workbuddy.cn`；CN 请求补上 5.11.3 桌面端新增的 `X-Client-Version/Platform/Product` 三头（国际包不发，按 realm 隔离）；桌面端 `/v2/report` 指纹三元组（版本/commit/releaseDate）按 realm 分档，不再给国内号盖国际包的指纹

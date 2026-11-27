@@ -930,7 +930,9 @@ func (c *Client) RefreshToken(a *auth.Auth) error {
 	endpoint := c.chatBase(a) + "/v2/plugin/auth/token/refresh"
 	ctx, cancel := context.WithTimeout(context.Background(), refreshIOTimeout)
 	defer cancel()
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, nil)
+	// body 恒为 `{}`：真机 refresh 请求体是 2 字节 `{}`（Content-Length: 2），
+	// 不是空 body。旧实现 nil reader → Content-Length: 0，与客户端不同。
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, strings.NewReader("{}"))
 	if err != nil {
 		return err
 	}

@@ -1162,6 +1162,20 @@ async function pollLogin() {
       $('addDone').hidden = false;
       $('addDone').textContent = '已添加 ' + (r.nickname || r.uid) + (r.realm === 'global' ? '（国际版）' : '') + (r.credits >= 0 ? ' · 积分 ' + r.credits + (r.credits_total > 0 ? '/' + r.credits_total : '') : '') + '，账号已载入池中';
       setTimeout(() => { closeAdd(); loadOverview(true); }, 1600);
+    } else if (r.fatal) {
+      // 上游终态拒绝（席位满/许可证过期/试用到期）：停止轮询，解锁选域让用户换号或稍后再试。
+      stopPoll();
+      $('addReady').hidden = true;
+      $('addPick').hidden = false;
+      $('btnStartLogin').hidden = false;
+      $('btnStartLogin').disabled = false;
+      $('btnCopyUrl').hidden = true;
+      $('btnOpenUrl').hidden = true;
+      $('addErr').hidden = false;
+      $('addErr').textContent = (r.message || '登录被上游拒绝') + '（关闭后重新添加）';
+    } else if (r.message && $('addPoll')) {
+      // pending（11217/12151）或网络抖动：保留轮询，把上游进度显示出来。
+      $('addPoll').textContent = '等待授权完成：' + r.message;
     }
   } catch (e) {
     stopPoll();

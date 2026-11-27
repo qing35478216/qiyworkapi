@@ -12,6 +12,7 @@ package panel
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -19,6 +20,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/qing35478216/qiyworkapi/internal/auth"
@@ -72,14 +74,16 @@ func doJSON(method, fullURL string, headers map[string]string, bearer string, bo
 	defer resp.Body.Close()
 	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	if resp.StatusCode >= 300 {
-		return nil, resp.StatusCode, fmt.Errorf("http_error: upstream %d", resp.StatusCode)
+		// 保留状态码：调用方据此区分「上游 5xx（真故障）」与「业务 pending」。
+		return nil, resp.StatusCode, &loginsite.EnvelopeError{Status: resp.StatusCode}
 	}
 	var env apiEnvelope
 	if err := json.Unmarshal(raw, &env); err != nil {
 		return nil, resp.StatusCode, fmt.Errorf("parse failed: %w", err)
 	}
 	if env.Code != 0 {
-		return nil, resp.StatusCode, fmt.Errorf("code=%d msg=%s", env.Code, env.Msg)
+		// 结构化错误：调用方按官方码表区分 pending（11217/12151）/ 终态（12005/11212/11216）。
+		return nil, resp.StatusCode, &loginsite.EnvelopeError{Code: env.Code, Msg: env.Msg, Status: resp.StatusCode}
 	}
 	return env.Data, resp.StatusCode, nil
 }
@@ -109,10 +113,20 @@ func (p *Panel) loginStart(w http.ResponseWriter, r *http.Request) {
 		var reqBody struct {
 			Realm string `json:"realm"`
 		}
-		if err := json.NewDecoder(io.LimitReader(r.Body, 1<<12)).Decode(&reqBody); err == nil {
-			if reqBody.Realm == "global" {
-				realm = "global"
-			}
+		if err := json.NewDecoder(io.LimitReader(r.Body, 1<<12)).Decode(&reqBody); err != nil && !errors.Is(err, io.EOF) {
+			writeErr(w, http.StatusBadRequest, "请求体不是合法 JSON（可选 {\"realm\":\"cn|global\"}）")
+			return
+		}
+		// 大小写/空白归一（与 CLI 的 --realm 解析同口径）；非法值直接报错，
+		// 不静默回落 cn——否则用户以为在加国际号，实际拿到的是国内授权链接。
+		switch strings.ToLower(strings.TrimSpace(reqBody.Realm)) {
+		case "", "cn":
+			realm = "cn"
+		case "global":
+			realm = "global"
+		default:
+			writeErr(w, http.StatusBadRequest, fmt.Sprintf("不支持的 realm %q（只能是 cn 或 global）", reqBody.Realm))
+			return
 		}
 	}
 
@@ -153,7 +167,7 @@ func (p *Panel) loginStart(w http.ResponseWriter, r *http.Request) {
 
 	site := loginsite.For(realm)
 	epState, _, _, _ := site.Endpoints()
-	data, status, err := doJSON(http.MethodPost, epState, site.StateHeaders(), "", bytes.NewReader([]byte("{}")))
+	data, status, err := doJSON(http.MethodPost, epState, site.StateHeaders(loginsite.DeviceToken()), "", bytes.NewReader([]byte("{}")))
 	if err != nil {
 		writeErr(w, http.StatusBadGateway, fmt.Sprintf("auth state (upstream %d): %v", status, err))
 		return
@@ -166,6 +180,9 @@ func (p *Panel) loginStart(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadGateway, "auth state: missing state or authUrl")
 		return
 	}
+	// 授权链接补齐真机参数：version（两版都加，授权页会转给 risk-context）、
+	// loginSessionId（仅 CN）、ww_device_nonce（有则加）。缺 version 时授权页按旧客户端渲染。
+	st.AuthURL = loginsite.DecorateAuthURL(st.AuthURL, site, loginsite.DeviceNonce(), loginsite.NewLoginSessionID())
 	p.loginMu.Lock()
 	p.logins[st.State] = loginSession{created: time.Now(), realm: realm}
 	p.loginPending = false
@@ -192,10 +209,25 @@ func (p *Panel) loginPoll(w http.ResponseWriter, r *http.Request) {
 	site := loginsite.For(sess.realm)
 	_, epToken, epAcct, _ := site.Endpoints()
 
-	// auth/token 是权威登录状态端点：pending 时业务 code 非 0（"login ing"）。
+	// auth/token 是权威登录状态端点：pending 时业务 code 非 0（11217）。
+	// 终态许可错误（12005/11212/11216）必须立刻结束并抛出上游 msg，不能空转到 TTL。
 	tokRaw, _, err := doJSON(http.MethodGet, epToken+state, site.TokenHeaders(), "", nil)
 	if err != nil {
-		// pending / 未完成：面板前端继续轮询。
+		var env *loginsite.EnvelopeError
+		if errors.As(err, &env) && loginsite.CodeFatal(env.Code) {
+			p.loginMu.Lock()
+			delete(p.logins, state)
+			p.loginMu.Unlock()
+			log.Printf("panel: 登录被上游拒绝 state=%s... code=%d msg=%s", state[:min(8, len(state))], env.Code, env.Msg)
+			writeJSON(w, http.StatusOK, map[string]any{
+				"done":    false,
+				"fatal":   true,
+				"code":    env.Code,
+				"message": fmt.Sprintf("登录被上游拒绝（code=%d）：%s", env.Code, env.Msg),
+			})
+			return
+		}
+		// pending / 网络抖动：面板前端继续轮询。
 		writeJSON(w, http.StatusOK, map[string]any{"done": false, "message": err.Error()})
 		return
 	}
@@ -210,17 +242,37 @@ func (p *Panel) loginPoll(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 完成：取 uid/nickname（失败不阻塞，仅缺展示名）。
+	// 完成：取 uid/nickname。官方 12151（RetryFetchAccount）是「token 已发但账号信息
+	// 还在落库」，属 pending，必须保留会话继续轮询——否则刚登录成功的号会被误判成失败，
+	// 用户重登又撞错峰窗口（10 分钟白等）。
 	var acct struct {
 		UID          string `json:"uid"`
 		EnterpriseID string `json:"enterpriseId"`
 		Nickname     string `json:"nickname"`
 	}
-	if acctRaw, _, err := doJSON(http.MethodGet, epAcct+state, site.AccountHeaders(tok.AccessToken), "", nil); err == nil {
-		_ = json.Unmarshal(acctRaw, &acct)
+	acctRaw, _, errAcct := doJSON(http.MethodGet, epAcct+state, site.AccountHeaders(tok.AccessToken), "", nil)
+	if errAcct != nil {
+		var env *loginsite.EnvelopeError
+		if errors.As(errAcct, &env) && loginsite.CodeFatal(env.Code) {
+			p.loginMu.Lock()
+			delete(p.logins, state)
+			p.loginMu.Unlock()
+			log.Printf("panel: 登录账号信息被上游拒绝 state=%s... code=%d msg=%s", state[:min(8, len(state))], env.Code, env.Msg)
+			writeJSON(w, http.StatusOK, map[string]any{
+				"done":    false,
+				"fatal":   true,
+				"code":    env.Code,
+				"message": fmt.Sprintf("登录被上游拒绝（code=%d）：%s", env.Code, env.Msg),
+			})
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"done": false, "message": errAcct.Error()})
+		return
 	}
+	_ = json.Unmarshal(acctRaw, &acct)
 	if acct.UID == "" {
-		writeErr(w, http.StatusBadGateway, "login done but no uid（token 已发但账号信息获取失败，请重试）")
+		// 账号信息缺 uid：保留会话等下一次轮询。token 已签发，丢弃等于浪费一个错峰窗口。
+		writeJSON(w, http.StatusOK, map[string]any{"done": false, "message": "账号信息缺少 uid，稍后重试"})
 		return
 	}
 	// UID 来自上游响应，未经校验就用于拼文件名会被路径穿越利用
