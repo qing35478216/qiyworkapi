@@ -238,6 +238,10 @@ func main() {
 		SoftCooldown:         cfg.SoftRateDur,
 		SanitizeFingerprints: cfg.Features.SanitizeBlacklistFingerprints,
 		RecordClientInfo:     cfg.Logging.RequestClientInfo,
+		LoginMinInterval:     cfg.LoginMinIntervalDur,
+		LoginMaxPerHour:      cfg.Login.MaxPerHour,
+		LoginMaxPerDay:       cfg.Login.MaxPerDay,
+		LoginGuardOff:        cfg.Login.Disabled,
 	})
 	// 用量记录器：与 state 文件同目录，随 state_file 配置一起搬移。
 	// datapath 由 state 文件路径推出，避免再加一个配置项。
@@ -275,6 +279,8 @@ func main() {
 		StickyCount: sessCount,
 		Version:     appVersion,
 		Live:        live,
+		// 登录错峰历史（与 state.json 同目录）：面板与 CLI 共用，跨进程生效。
+		LoginHistoryPath: stateSibling(cfg.StateFile, "login-history.json"),
 		// 模型上限探测数据（scripts/probe_max_tokens.py --panel-out 写入）：
 		// 与 state 文件同目录，缺省 data/output_probes.json。
 		ProbeFile:  stateSibling(cfg.StateFile, "output_probes.json"),
@@ -487,6 +493,10 @@ func saveConfig(raw []byte, path string, live *livecfg.Holder, p *pool.Pool, up 
 		SoftCooldown:         newCfg.SoftRateDur,
 		SanitizeFingerprints: newCfg.Features.SanitizeBlacklistFingerprints,
 		RecordClientInfo:     newCfg.Logging.RequestClientInfo,
+		LoginMinInterval:     newCfg.LoginMinIntervalDur,
+		LoginMaxPerHour:      newCfg.Login.MaxPerHour,
+		LoginMaxPerDay:       newCfg.Login.MaxPerDay,
+		LoginGuardOff:        newCfg.Login.Disabled,
 	})
 	up.SanitizeFingerprints.Store(newCfg.Features.SanitizeBlacklistFingerprints)
 	p.SetBreaker(newCfg.Pool.BreakerThreshold, newCfg.BreakerCooldownDur, newCfg.BreakerCooldownMaxD)

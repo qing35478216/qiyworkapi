@@ -18,9 +18,11 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"time"
 
 	"github.com/qing35478216/qiyworkapi/internal/auth"
+	"github.com/qing35478216/qiyworkapi/internal/loginguard"
 )
 
 const (
@@ -113,6 +115,23 @@ func doJSON(method, fullURL, bearer string, body io.Reader, origin string) (json
 	return env.Data, resp.StatusCode, nil
 }
 
+// loginGuard 以当前热配置构造登录错峰闸门。Path 为空时闸门自动失效（放行）。
+func (p *Panel) loginGuard() *loginguard.Guard {
+	s := p.cfg.Live.Load()
+	minInterval := s.LoginMinInterval
+	if minInterval == 0 {
+		// 未注入热配置时回退默认，避免闸门静默失效（Path 为空仍会 no-op）。
+		minInterval = 10 * time.Minute
+	}
+	return &loginguard.Guard{
+		Path:        p.cfg.LoginHistoryPath,
+		MinInterval: minInterval,
+		MaxPerHour:  s.LoginMaxPerHour,
+		MaxPerDay:   s.LoginMaxPerDay,
+		Disabled:    s.LoginGuardOff,
+	}
+}
+
 // loginStart 发起设备授权：POST auth/state 拿授权 URL。
 // body 可带 {"realm":"global"}（缺省 cn）；state 会话记 realm，poll 同 realm 落盘。
 func (p *Panel) loginStart(w http.ResponseWriter, r *http.Request) {
@@ -127,6 +146,42 @@ func (p *Panel) loginStart(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
+
+	// 闸门一：错峰（距上次登录太近 / 滚动窗口内数量超限）。
+	if d := p.loginGuard().Check(); !d.Allowed {
+		w.Header().Set("Retry-After", strconv.Itoa(int(d.Wait.Seconds())+1))
+		writeErr(w, http.StatusTooManyRequests, fmt.Sprintf(
+			"登录过于频繁：%s；请等待 %s后再添加账号（如需紧急补登，可在配置里临时设 login.disabled=true）",
+			d.Reason, loginguard.HumanDuration(d.Wait)))
+		return
+	}
+
+	// 闸门二：全局单飞，任何时刻只允许一个登录流程。
+	// 顺手回收过期会话，防"开弹窗走开"的 state 滞留。
+	p.loginMu.Lock()
+	for s, sess := range p.logins {
+		if time.Since(sess.created) > loginTTL {
+			delete(p.logins, s)
+		}
+	}
+	if len(p.logins) > 0 || p.loginPending {
+		p.loginMu.Unlock()
+		writeErr(w, http.StatusConflict,
+			"已有登录流程进行中：请先在浏览器完成它，或等待 15 分钟授权超时后再添加下一个账号")
+		return
+	}
+	p.loginPending = true
+	p.loginMu.Unlock()
+
+	inserted := false
+	defer func() {
+		if !inserted {
+			p.loginMu.Lock()
+			p.loginPending = false
+			p.loginMu.Unlock()
+		}
+	}()
+
 	epState, _, _, origin := loginEndpoints(realm)
 	data, status, err := doJSON(http.MethodPost, epState, "", bytes.NewReader([]byte("{}")), origin)
 	if err != nil {
@@ -142,14 +197,10 @@ func (p *Panel) loginStart(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	p.loginMu.Lock()
-	// 顺手回收过期会话，防"开弹窗走开"的 state 滞留。
-	for s, sess := range p.logins {
-		if time.Since(sess.created) > loginTTL {
-			delete(p.logins, s)
-		}
-	}
 	p.logins[st.State] = loginSession{created: time.Now(), realm: realm}
+	p.loginPending = false
 	p.loginMu.Unlock()
+	inserted = true
 	log.Printf("panel: 发起 OAuth 添加账号 realm=%s（state=%s...）", realm, st.State[:min(8, len(st.State))])
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "url": st.AuthURL, "state": st.State, "realm": realm})
 }
@@ -241,6 +292,17 @@ func (p *Panel) loginPoll(w http.ResponseWriter, r *http.Request) {
 	p.cfg.Pool.Add(a)
 	p.cfg.Pool.Revive(acct.UID) // 全新登录 = 人工恢复口径：清掉旧号遗留的禁用/冷却/熔断
 
+	// 记录本次成功登录，供下一次 loginStart 计算错峰窗口。
+	// 记录失败不影响本次登录（凭证已落盘），仅记日志。
+	guard := p.loginGuard()
+	if err := guard.Record(acct.UID, sess.realm); err != nil {
+		log.Printf("panel: 登录错峰记录失败 uid=%s（不影响本次登录）: %v", acct.UID, err)
+	}
+	nextLogin := ""
+	if d := guard.Check(); !d.Allowed {
+		nextLogin = d.NextAt.Format(time.RFC3339)
+	}
+
 	// 顺带签到 + 余额刷新（幂等；失败不影响登录结果，只体现在返回字段里）。
 	// realm 分支：CN 走 DailyCheckin；global 无 CN 签到体系，改为注册激活 + trial 领取
 	// （D4 门控同 scheduler：CN 任务端点对 global 不发起任何调用）。
@@ -288,6 +350,7 @@ func (p *Panel) loginPoll(w http.ResponseWriter, r *http.Request) {
 		"credits":         remain,
 		"credits_total":   total,
 		"checkin_message": checkinMsg,
+		"next_login_at":   nextLogin,
 	})
 }
 

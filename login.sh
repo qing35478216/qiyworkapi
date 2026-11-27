@@ -9,6 +9,9 @@
 #   2. 你在浏览器打开 URL 完成登录
 #   3. 回到这里按 y → poll 拿 token+uid+nickname → 签到 → 落盘 auths/workbuddy-<uid>.json
 #   4. 重启 qiyworkapi 容器加载新账号
+#
+# 登录错峰：默认两次成功登录至少间隔 10 分钟、每小时最多 4 个（config.login.*）。
+# 被拦下时脚本会打印还需等待多久；应急跳过设 LOGIN_FORCE=1（不建议）。
 set -euo pipefail
 
 cd "$(dirname "$0")"
@@ -28,7 +31,11 @@ echo "  WorkBuddy OAuth 登录"
 echo "============================================================"
 echo ""
 
-AUTH_URL=$("$LOGIN_BIN" url)
+if [[ "${LOGIN_FORCE:-0}" == "1" ]]; then
+    AUTH_URL=$("$LOGIN_BIN" --force url)
+else
+    AUTH_URL=$("$LOGIN_BIN" url)
+fi
 
 echo "请在浏览器中打开以下链接完成登录："
 echo ""

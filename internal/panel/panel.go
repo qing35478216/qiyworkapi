@@ -37,9 +37,12 @@ type Config struct {
 	Upstream  *upstream.Client
 	Scheduler *scheduler.Scheduler // 手动触发签到/保活；nil 时对应接口返回 501
 	AuthDir   string               // OAuth 登录完成后凭证落盘目录
-	APIKey    string               // 空 = 不鉴权（与主服务同语义）；与 Live 同时给出时 Live 优先
-	RedisMode string               // "upstash" / "noop"，仅观测透出
-	Version   string               // 面板版本号（展示用）
+	// LoginHistoryPath 登录错峰历史文件（与 state.json 同目录）。
+	// 空 = 不启用闸门（测试/嵌入场景）。
+	LoginHistoryPath string
+	APIKey           string // 空 = 不鉴权（与主服务同语义）；与 Live 同时给出时 Live 优先
+	RedisMode        string // "upstash" / "noop"，仅观测透出
+	Version          string // 面板版本号（展示用）
 
 	// Live 运行期可变配置（在线改配置立即生效）。
 	Live *livecfg.Holder
@@ -79,6 +82,10 @@ type Panel struct {
 	// poll 成功或超时（loginTTL）后剔除；面板常驻进程，容量天然有界。
 	loginMu sync.Mutex
 	logins  map[string]loginSession
+	// loginPending loginStart 正在向上游申请 state（尚未拿到 URL）。
+	// 与 logins 一起构成「全局单飞」：任何时刻只允许一个登录流程存在，
+	// 避免同时开多个 OAuth 窗口、几分钟内连续落盘多个账号。
+	loginPending bool
 
 	// taskMu/taskLocks 一键完成任务的 per-account 互斥：同一账号的任务动作
 	// （单任务 / 全量）同时只允许一条在跑。重复点击直接返回 409"仍在执行"，

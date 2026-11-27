@@ -27,6 +27,23 @@ type Config struct {
 		PackageDetailLimit int `json:"package_detail_limit"`
 	} `json:"panel"`
 
+	// Login 登录错峰闸门：限制两次成功登录之间的间隔与滚动窗口内的登录数量。
+	//
+	// 为什么需要它：上游对「短时间批量登录」非常敏感。2026-11-27 多起事故中，
+	// 同一批次登录的账号在 24 小时内被整批吊销 refresh token（12153
+	// invalid_grant: refresh token revoked），access token 名义未到期也会被网关 401。
+	// 闸门在本地就把登录节奏拉开，避免把一批号一次性送进风控。
+	Login struct {
+		// MinInterval 两次成功登录的最小间隔，如 "10m"；"0" 关闭间隔限制。
+		MinInterval string `json:"min_interval"`
+		// MaxPerHour 任意滚动 1 小时内的登录次数上限；<=0 不限制。
+		MaxPerHour int `json:"max_per_hour"`
+		// MaxPerDay 任意滚动 24 小时内的登录次数上限；<=0 不限制（默认）。
+		MaxPerDay int `json:"max_per_day"`
+		// Disabled 应急开关：true 时完全放行（自动签到/手动补登排障用）。
+		Disabled bool `json:"disabled"`
+	} `json:"login"`
+
 	Logging struct {
 		// RequestArchiveEnabled 请求元数据 JSONL 归档开关，缺省 true。
 		RequestArchiveEnabled bool `json:"request_archive_enabled"`
@@ -235,6 +252,8 @@ type Config struct {
 	CostExploreIntervalDur time.Duration `json:"-"`
 	// ServerReadTimeoutDur 解析后的入站请求读取上限（issue #100）；0 = 不限制。
 	ServerReadTimeoutDur time.Duration `json:"-"`
+	// LoginMinIntervalDur 解析后的登录最小间隔；0 = 不限制。
+	LoginMinIntervalDur time.Duration `json:"-"`
 }
 
 // Default 默认配置。
@@ -249,6 +268,12 @@ func Default() *Config {
 	c.Cooldown.SoftRateMax = "2h"
 	c.Server.ReadTimeout = "300s"
 	c.Panel.PackageDetailLimit = 5
+	// 登录错峰默认值：10 分钟内不重复登录、每小时最多 4 个。
+	// max_per_day 默认 0（不限制）——自建号池常用「一天内补登全部」，
+	// 强制日上限反而会让人用 --force 绕过闸门，失去意义。
+	c.Login.MinInterval = "10m"
+	c.Login.MaxPerHour = 4
+	c.Login.MaxPerDay = 0
 	c.Logging.RequestArchiveEnabled = true
 	c.Logging.RequestRetentionDays = 7
 	c.Logging.RequestArchiveMaxMB = 100
@@ -471,6 +496,23 @@ func (c *Config) normalize() error {
 	}
 	if c.Logging.RequestArchiveMaxMB <= 0 {
 		c.Logging.RequestArchiveMaxMB = 100
+	}
+	// 登录错峰：空值回落 10m；"0" 合法（只关间隔，小时上限仍生效）；
+	// 负值无意义，fail fast（静默钳 0 会把闸门悄悄关掉）。
+	if c.Login.MinInterval == "" {
+		c.Login.MinInterval = "10m"
+	}
+	if c.LoginMinIntervalDur, err = time.ParseDuration(c.Login.MinInterval); err != nil {
+		return fmt.Errorf("login.min_interval: %w", err)
+	}
+	if c.LoginMinIntervalDur < 0 {
+		return fmt.Errorf("login.min_interval: 负时长 %q 无意义", c.Login.MinInterval)
+	}
+	if c.Login.MaxPerHour < 0 {
+		c.Login.MaxPerHour = 0
+	}
+	if c.Login.MaxPerDay < 0 {
+		c.Login.MaxPerDay = 0
 	}
 	// 入站读取上限（issue #100）：空值回落默认 300s；"0" 合法（不限制）；
 	// 负值无语义，fail fast（静默钳 0 会把保护悄悄关掉）。

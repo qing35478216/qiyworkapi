@@ -19,6 +19,12 @@
     "soft_rate": "600s",
     "soft_rate_max": "2h"
   },
+  "login": {
+    "min_interval": "10m",
+    "max_per_hour": 4,
+    "max_per_day": 0,
+    "disabled": false
+  },
   "schedule": {
     "checkin_hours": [9, 21],
     "growth_hours": [1],

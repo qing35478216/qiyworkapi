@@ -27,10 +27,12 @@ import (
 	"net/http/cookiejar"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
 	auth2 "github.com/qing35478216/qiyworkapi/internal/auth"
+	"github.com/qing35478216/qiyworkapi/internal/loginguard"
 )
 
 // 上游常量：CN → copilot.tencent.com（Origin 为 codebuddy.cn）；global → www.workbuddy.ai
@@ -43,11 +45,63 @@ const (
 	originRefererGlobal = "https://www.workbuddy.ai"
 )
 
-// 登录 state 落盘路径（var 便于测试替换临时文件）
+// stateFile 登录 state 落盘路径（var 便于测试替换临时文件）
 // Portable across OSes: the upstream hardcoded "/tmp/...", which on
 // Windows resolves to <drive>:\tmp\... and aborts the OAuth flow with
 // "The system cannot find the path specified". os.TempDir() is /tmp on Linux.
 var stateFile = filepath.Join(os.TempDir(), "qiyworkapi-login-state.json")
+
+// forceLogin 由 --force 置位：应急跳过错峰闸门（不推荐，仅排障用）。
+var forceLogin bool
+
+// loginHistoryPath 与面板共用同一份历史（面板默认 data/login-history.json）。
+// 可通过 QIYWORKAPI_LOGIN_HISTORY 覆盖（Docker/自定义目录部署用）。
+func loginHistoryPath() string {
+	if v := strings.TrimSpace(os.Getenv("QIYWORKAPI_LOGIN_HISTORY")); v != "" {
+		return v
+	}
+	return filepath.Join("data", "login-history.json")
+}
+
+// cliGuard 构造与面板同口径的错峰闸门。默认值与 cmd/server 保持一致：
+// 间隔 10m、每小时 4 个、每日不限制；可用环境变量覆盖，便于脚本化部署。
+func cliGuard() *loginguard.Guard {
+	minInterval := 10 * time.Minute
+	if v := strings.TrimSpace(os.Getenv("QIYWORKAPI_LOGIN_MIN_INTERVAL")); v != "" {
+		if d, err := time.ParseDuration(v); err == nil && d >= 0 {
+			minInterval = d
+		}
+	}
+	maxPerHour := 4
+	if v := strings.TrimSpace(os.Getenv("QIYWORKAPI_LOGIN_MAX_PER_HOUR")); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n >= 0 {
+			maxPerHour = n
+		}
+	}
+	maxPerDay := 0
+	if v := strings.TrimSpace(os.Getenv("QIYWORKAPI_LOGIN_MAX_PER_DAY")); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n >= 0 {
+			maxPerDay = n
+		}
+	}
+	return &loginguard.Guard{
+		Path:        loginHistoryPath(),
+		MinInterval: minInterval,
+		MaxPerHour:  maxPerHour,
+		MaxPerDay:   maxPerDay,
+	}
+}
+
+// ensureLoginAllowed 在发起 OAuth 前做一次错峰检查。
+func ensureLoginAllowed() {
+	if forceLogin {
+		return
+	}
+	if d := cliGuard().Check(); !d.Allowed {
+		fatal("登录过于频繁：%s；还需等待 %s（确需跳过请加 --force）",
+			d.Reason, loginguard.HumanDuration(d.Wait))
+	}
+}
 
 // exitFunc 供测试替换（默认 os.Exit；测试持临时替换为 panic 以进程内捕获 fatal）。
 var exitFunc = os.Exit
@@ -206,6 +260,7 @@ func validateRealmMatch(stateRealm, cliRealm string) error {
 // state 落盘（带 realm），stdout 打印 authURL。out 接 stdout；stateFile 为落盘路径
 // （可注入临时文件便于测试）。空 realm 视为缺省（调用方已归一）。
 func runURL(base, origin, realm, statePath string, client *http.Client, out io.Writer) {
+	ensureLoginAllowed()
 	headers := commonHeaders(origin)
 	data, _, err := doJSON(client, http.MethodPost, base+"/v2/plugin/auth/state?platform=CLI", headers, bytes.NewReader([]byte("{}")))
 	if err != nil {
@@ -273,6 +328,10 @@ func runPoll(base, origin, realm, statePath string, client *http.Client, out io.
 	if acctRaw, _, errAcct := doJSON(client, http.MethodGet, base+"/v2/plugin/login/account?state="+ls.State, acctHeaders, nil); errAcct == nil {
 		_ = json.Unmarshal(acctRaw, &acct)
 	}
+	// 记录成功登录，供下一次 url 计算错峰窗口（与面板共用 data/login-history.json）。
+	if err := cliGuard().Record(acct.UID, auth2.ResolveRealm(realm, tok.Domain)); err != nil {
+		fmt.Fprintf(os.Stderr, "login: 记录登录时间失败（不影响本次登录）: %v\n", err)
+	}
 	oraw, _ := json.Marshal(buildLoginOutput(tok, realm, acct))
 	fmt.Fprintln(out, string(oraw))
 	os.Remove(statePath)
@@ -304,12 +363,21 @@ func buildLoginOutput(tok struct {
 }
 
 func main() {
-	realm, rest, err := parseRealmArgs(os.Args[1:])
+	// --force 与 realm 解析解耦：先摘出来，其余参数保持原顺序。
+	args := make([]string, 0, len(os.Args[1:]))
+	for _, a := range os.Args[1:] {
+		if a == "--force" {
+			forceLogin = true
+			continue
+		}
+		args = append(args, a)
+	}
+	realm, rest, err := parseRealmArgs(args)
 	if err != nil {
-		fatal("%v (usage: login [--realm=cn|global] <url|poll|realm>)", err)
+		fatal("%v (usage: login [--realm=cn|global] [--force] <url|poll|realm>)", err)
 	}
 	if len(rest) < 1 {
-		fatal("usage: login [--realm=cn|global] <url|poll>")
+		fatal("usage: login [--realm=cn|global] [--force] <url|poll>")
 	}
 	// 每个流程独立 cookie jar（oauth.go:22-29：多账号登录互不串会话）
 	jar, _ := cookiejar.New(nil)

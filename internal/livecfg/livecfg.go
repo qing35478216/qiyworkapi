@@ -19,6 +19,13 @@ type Snapshot struct {
 	SoftCooldown         time.Duration // 429 软冷却基数（<=0 时调用方回退内置默认）
 	SanitizeFingerprints bool          // 出站请求体指纹脱敏
 	RecordClientInfo     bool          // 请求日志是否记录调用来源（客户端 IP / UA）
+
+	// 登录错峰闸门（config.login.*）：防止多个账号在短时间内批量登录，
+	// 被上游风控判定为异常后整批吊销 refresh token。热生效。
+	LoginMinInterval time.Duration // 两次成功登录的最小间隔；<=0 不限制
+	LoginMaxPerHour  int           // 滚动 1 小时登录上限；<=0 不限制
+	LoginMaxPerDay   int           // 滚动 24 小时登录上限；<=0 不限制
+	LoginGuardOff    bool          // true = 完全放行（应急开关）
 }
 
 // Holder 原子持有当前快照。

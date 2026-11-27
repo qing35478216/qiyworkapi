@@ -351,6 +351,22 @@ CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o credit ./cmd/credit
 
 > Windows 用户请用方式 A（或 WSL）；`login.sh` 需要 python3。
 
+#### 登录错峰（默认开启，防止批量登录被上游整批踢下线）
+
+上游对「短时间批量登录」非常敏感：2026-11-27 出现过整批账号在登录后 24 小时内被吊销 refresh token（`12153 invalid_grant: refresh token revoked`），表现为全池 401、需要逐个重新登录。为此项目内置了登录闸门：
+
+- 两次成功登录之间至少间隔 **10 分钟**（`login.min_interval`）
+- 任意滚动 1 小时最多登录 **4 个**（`login.max_per_hour`）
+- 任意滚动 24 小时上限默认不限制（`login.max_per_day=0`）
+- 任何时刻只允许一个 OAuth 流程进行中，重复发起返回 409
+
+面板与 `login.sh` 共用同一份历史 `data/login-history.json`，所以从哪个入口登录都受同样约束。被拦下时：
+
+- 面板返回 429，提示还需等待多久（带 `Retry-After`）
+- CLI 直接退出并提示剩余时间；确需应急跳过时用 `./login --force url`（不建议）
+
+补号建议：**一天补 2~3 个，间隔半小时以上**，不要一次把十几个号全登回去。应急时可在配置里设 `login.disabled=true` 临时关闭闸门。
+
 ### 验证
 
 ```bash
@@ -392,6 +408,10 @@ curl -s http://localhost:7863/v1/chat/completions \
 | `logging.request_archive_max_mb` | `100` | 请求归档总容量上限（MiB）；超限优先删除最旧文件 |
 | `cooldown.soft_rate` | `600s` | 软限流（429 / 限流文案）冷却基数；同一账号连续触发按 2 倍指数退避 |
 | `cooldown.soft_rate_max` | `2h` | 软冷却指数退避封顶 |
+| `login.min_interval` | `10m` | 两次成功登录的最小间隔；`0` = 只关间隔（小时上限仍生效） |
+| `login.max_per_hour` | `4` | 任意滚动 1 小时内登录次数上限；`0` = 不限制 |
+| `login.max_per_day` | `0` | 任意滚动 24 小时内登录次数上限；`0` = 不限制 |
+| `login.disabled` | `false` | 应急开关：`true` 完全放行登录闸门（不建议常开） |
 | `schedule.checkin_hours` | `[9, 21]` | 每日本地时区整点签到 + 余额查询解冻。空数组 / `null` = 未配置回落默认（不是禁用） |
 | `schedule.travel_hours` | `[9, 21]` | 每日本地时区整点推进猫猫旅行状态机（领养 / 派出 / 领奖） |
 | `schedule.activity_hours` | `[10]` | 每日本地时区整点对话活跃上报（点亮连登 + 解锁 `first_buddy`） |
@@ -699,7 +719,7 @@ http://127.0.0.1:7863/panel/
 来源信息比 token 计数敏感（IP 属个人信息），因此由 `logging.request_client_info` 控制，**缺省开启、热生效、面板「配置 → 日志」可关**；关闭后归档与面板都不再出现来源字段（老归档里没有该字段的条目显示 `—`）。
 
 **配置热生效**：保存配置后，`api_key`、`cooldown.soft_rate`、`features.sanitize_blacklist_fingerprints`、
-`logging.request_client_info`、`pool.*`（熔断/在途/权重）、`schedule.*`（时点/开关/余额刷新间隔）**立即生效，无需重启**；
+`logging.request_client_info`、`login.*`（登录错峰）、`pool.*`（熔断/在途/权重）、`schedule.*`（时点/开关/余额刷新间隔）**立即生效，无需重启**；
 涉及进程装配期依赖的字段（`listen`、`auth_dir`、`state_file`、`upstream.*`、`upstash.*`、`session_sticky.ttl`）
 保存后会提示"需重启进程生效"。配置写入采用「深合并且原子替换」：只更新面板表单覆盖的键，
 用户手写的未知键与其余字段原样保留。
