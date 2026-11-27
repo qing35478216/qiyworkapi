@@ -6,6 +6,9 @@
 
 ### 新增
 
+- **出站身份按 realm 对齐官方分发包（2026-11 口径）**：CN `5.11.3` / 内置 CLI `2.176.0`，global `5.9.4` / `2.165.0`（旧实现统一 5.5.4 / 2.137.1，落后两个大版本）。UA 第二段 global 由 `WorkBuddy AI`（带空格，官方从不产生）改为真实的 `workbuddy-ai`；CN 业务 Origin 由 `codebuddy.cn`（CodeBuddy CLI 时代遗留）改为 `workbuddy.cn`；CN 请求补上 5.11.3 桌面端新增的 `X-Client-Version/Platform/Product` 三头（国际包不发，按 realm 隔离）；桌面端 `/v2/report` 指纹三元组（版本/commit/releaseDate）按 realm 分档，不再给国内号盖国际包的指纹
+- **登录设备码链路身份重写**：`platform=CLI` → `workbuddy`（CN）/ `workbuddy-ai`（GL）；UA 由 CodeBuddy IDE 时代的 `CLI/2.63.2 CodeBuddy/2.63.2` 改为桌面端 RPC 族；头族改为真机形态（`X-Product: SaaS` + 32 hex `X-Request-ID` + `X-Domain` + `X-No-*` 字符串 `true` 哨兵），去掉设备码端点不该有的 Origin/Referer/X-Requested-With。面板与 CLI 共用新增的 `internal/loginsite`，避免两处各写一套指纹
+- **429 / 模型封锁补 Retry-After**：限流与模型不可用时按「上游明示 → 模型解封时刻 → 池内最早解冻」给出等待秒数（`auth_dead` 不参与，等它没用），客户端不再盲猜退避（社区 issue #15 的诉求）
 - **登录错峰闸门**：面板与 `login.sh` 共用 `data/login-history.json`，默认两次成功登录至少间隔 10 分钟、滚动 1 小时最多 4 个，并保证同一时刻只有一个 OAuth 流程；被拦下时返回 429/CLI 提示剩余等待时间。配置项 `login.*` 热生效，应急可设 `login.disabled=true` 或 CLI `--force`。目的：避免多个账号集中登录被上游判定为批量小号，整批吊销 refresh token（2026-11-27 多项目同发事故）
 - **会话死亡软暂停（auth_dead）**：上游以 401/12153 明确拒绝令牌时，账号即时暂停选号（30 分钟到期自动复探），不再每个请求挨个撞一遍死号。触发面全覆盖：chat 401（含 APISIX 边缘层裸 HTML 401——此前只认 12153 业务信封，2026-10-17 上游批量吊销 10 个号会话后网关持续「假健康」）、按需刷新失败、keepalive 刷新失败。恢复路径：刷新成功 / 聊天成功 / 重新登录（令牌变更自动清除，无需到期或人工解冻）。`/status` 与面板新增「需重新登录」计数与账号标识；连续 3 次仍走既有永久禁用（防误杀语义不变）
 

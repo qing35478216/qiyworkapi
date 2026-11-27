@@ -33,6 +33,7 @@ import (
 
 	auth2 "github.com/qing35478216/qiyworkapi/internal/auth"
 	"github.com/qing35478216/qiyworkapi/internal/loginguard"
+	"github.com/qing35478216/qiyworkapi/internal/loginsite"
 )
 
 // 上游常量：CN → copilot.tencent.com（Origin 为 codebuddy.cn）；global → www.workbuddy.ai
@@ -40,7 +41,6 @@ import (
 const (
 	upstreamBaseCN      = "https://copilot.tencent.com"
 	upstreamBaseGlobal  = "https://www.workbuddy.ai"
-	clientUA            = "CLI/2.63.2 CodeBuddy/2.63.2"
 	originRefererCN     = "https://www.codebuddy.cn"
 	originRefererGlobal = "https://www.workbuddy.ai"
 )
@@ -115,17 +115,14 @@ func realmConfig(realm string) (base, origin string) {
 	return upstreamBaseCN, originRefererCN
 }
 
-// commonHeaders 按 origin 设置通用请求头（Origin/Referer 随 realm 变化）。
-// 返回 func(*http.Request)，由调用方按 realm 选定的 origin 构造一次后复用。
-func commonHeaders(origin string) func(*http.Request) {
-	return func(req *http.Request) {
-		req.Header.Set("Content-Type", "application/json")
-		req.Header.Set("Accept", "application/json, text/plain, */*")
-		req.Header.Set("X-Requested-With", "XMLHttpRequest")
-		req.Header.Set("Origin", origin)
-		req.Header.Set("Referer", origin+"/")
-		req.Header.Set("User-Agent", clientUA)
+// commonHeaders 为历史调用点保留的兼容包装：按 origin 推断 realm 后返回站点头族。
+// 新代码应直接用 loginsite.For(realm) 的 StateHeaders/TokenHeaders/AccountHeaders。
+func commonHeaders(origin string) map[string]string {
+	realm := realmCN
+	if origin == originRefererGlobal {
+		realm = realmGlobal
 	}
+	return loginsite.For(realm).StateHeaders()
 }
 
 // apiEnvelope 与 main.go:429-433 一致
@@ -135,17 +132,18 @@ type apiEnvelope struct {
 	Data json.RawMessage `json:"data"`
 }
 
-// doJSON 与 oauth.go:33-66 一致：{code,msg,data} 信封，code!=0 → error
-func doJSON(client *http.Client, method, fullURL string, headers func(*http.Request), body io.Reader) (json.RawMessage, int, error) {
+// doJSON 与 oauth.go:33-66 一致：{code,msg,data} 信封，code!=0 → error。
+// headers 为站点出站头族（loginsite 提供）；nil 时回落 CN 站点头。
+func doJSON(client *http.Client, method, fullURL string, headers map[string]string, body io.Reader) (json.RawMessage, int, error) {
 	req, err := http.NewRequest(method, fullURL, body)
 	if err != nil {
 		return nil, 0, err
 	}
-	if headers != nil {
-		headers(req)
-	} else {
-		// 缺省头：CN origin（与原 commonHeaders() 行为一致，零回归）
-		commonHeaders(originRefererCN)(req)
+	if headers == nil {
+		headers = commonHeaders(originRefererCN)
+	}
+	for k, v := range headers {
+		req.Header.Set(k, v)
 	}
 	resp, err := client.Do(req)
 	if err != nil {
@@ -261,8 +259,8 @@ func validateRealmMatch(stateRealm, cliRealm string) error {
 // （可注入临时文件便于测试）。空 realm 视为缺省（调用方已归一）。
 func runURL(base, origin, realm, statePath string, client *http.Client, out io.Writer) {
 	ensureLoginAllowed()
-	headers := commonHeaders(origin)
-	data, _, err := doJSON(client, http.MethodPost, base+"/v2/plugin/auth/state?platform=CLI", headers, bytes.NewReader([]byte("{}")))
+	site := loginsite.For(realm)
+	data, _, err := doJSON(client, http.MethodPost, base+"/v2/plugin/auth/state?platform="+site.Platform, site.StateHeaders(), bytes.NewReader([]byte("{}")))
 	if err != nil {
 		fatal("auth state failed: %v", err)
 	}
@@ -296,10 +294,10 @@ func runPoll(base, origin, realm, statePath string, client *http.Client, out io.
 	if err := validateRealmMatch(ls.Realm, realm); err != nil {
 		fatal("%v", err)
 	}
-	headers := commonHeaders(origin)
+	site := loginsite.For(realm)
 	// handlePollLogin (oauth.go:108-162)：auth/token 是权威登录状态端点，
 	// pending 时业务 code 非 0（"login ing"），完成时 code=0 + token bundle
-	tokRaw, status, errTok := doJSON(client, http.MethodGet, base+"/v2/plugin/auth/token?state="+ls.State, headers, nil)
+	tokRaw, status, errTok := doJSON(client, http.MethodGet, base+"/v2/plugin/auth/token?state="+ls.State, site.TokenHeaders(), nil)
 	if errTok != nil {
 		if status == 0 || status >= 500 {
 			fatal("token endpoint error: %v", errTok)
@@ -321,11 +319,7 @@ func runPoll(base, origin, realm, statePath string, client *http.Client, out io.
 		EnterpriseID string `json:"enterpriseId"`
 		Nickname     string `json:"nickname"`
 	}
-	acctHeaders := func(r *http.Request) {
-		headers(r)
-		r.Header.Set("Authorization", "Bearer "+tok.AccessToken)
-	}
-	if acctRaw, _, errAcct := doJSON(client, http.MethodGet, base+"/v2/plugin/login/account?state="+ls.State, acctHeaders, nil); errAcct == nil {
+	if acctRaw, _, errAcct := doJSON(client, http.MethodGet, base+"/v2/plugin/login/account?state="+ls.State, site.AccountHeaders(tok.AccessToken), nil); errAcct == nil {
 		_ = json.Unmarshal(acctRaw, &acct)
 	}
 	// 记录成功登录，供下一次 url 计算错峰窗口（与面板共用 data/login-history.json）。

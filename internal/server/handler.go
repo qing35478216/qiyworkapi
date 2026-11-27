@@ -8,9 +8,11 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"math"
 	"net"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
 
 	"sync"
@@ -1202,6 +1204,15 @@ func (h *Handler) chatCompletions(w http.ResponseWriter, r *http.Request) {
 		}
 		status = http.StatusBadRequest
 	}
+	// Retry-After：限流/模型封锁类错误给客户端一个明确的等待秒数。
+	// 旧行为只给 429 状态码不带头，客户端只能盲猜退避时长（社区 issue #15 的诉求：
+	// 「整池限流时通过 429 和 Retry-After 通知客户端」）。取三者最小值：
+	// 上游明示 → 模型解封时刻 → 池内最早解冻时刻；都没有时给 60s 兜底。
+	if status == http.StatusTooManyRequests || modelBlock.Blocked {
+		if secs := h.retryAfterSeconds(ue, modelBlock); secs > 0 {
+			w.Header().Set("Retry-After", strconv.Itoa(secs))
+		}
+	}
 	writeOpenAIErrorHint(w, status, code, msg, hint)
 	st.status = status
 	st.outcome = reqlog.OutcomeHTTPError
@@ -1477,6 +1488,47 @@ const wafCooldownBase = 60 * time.Second
 // writeOpenAIErrorHint 同 writeOpenAIError，另在 error 对象上附加
 // error.gateway_hint（hint 为空串时不带字段——未覆盖形态不编造）。
 // message 仍是上游原文透传（hint 只做并列补充，绝不替换/包装 message）。
+// retryAfterSeconds 估算客户端应等待多少秒再重试（用于 429 / 模型封锁的 Retry-After 头）。
+//
+// 取值优先级（取最小，越早能服务越好）：
+//  1. 上游明示的 Retry-After（最权威，直接反映本次被限的窗口）；
+//  2. 模型级封锁的最早解封时刻；
+//  3. 池内非禁用、非 auth_dead 账号的最早解冻剩余（auth_dead 要重新登录才恢复，
+//     把它算进来会让客户端等一个永远不会到的时刻）。
+//
+// 全都没有观测时给 60s 兜底：不给头会让客户端按固定 1s 猛重试，反而放大限流。
+func (h *Handler) retryAfterSeconds(ue *upstream.Error, mb pool.ModelBlockStatus) int {
+	now := time.Now()
+	var wait time.Duration
+	if ue != nil && ue.RetryAfter > 0 {
+		wait = ue.RetryAfter
+	}
+	if mb.Blocked && mb.Until.After(now) {
+		if d := mb.Until.Sub(now); wait <= 0 || d < wait {
+			wait = d
+		}
+	}
+	if p := h.cfg.Pool; p != nil {
+		for _, st := range p.List() {
+			if st.Disabled || st.AuthDead || st.CoolRemaining <= 0 {
+				continue
+			}
+			if d := time.Duration(st.CoolRemaining) * time.Second; wait <= 0 || d < wait {
+				wait = d
+			}
+		}
+	}
+	if wait <= 0 {
+		wait = 60 * time.Second
+	}
+	secs := int(math.Ceil(wait.Seconds()))
+	if secs < 1 {
+		secs = 1
+	}
+	return secs
+}
+
+// writeOpenAIErrorHint 写出带 gateway_hint 的 OpenAI 兼容错误体。
 func writeOpenAIErrorHint(w http.ResponseWriter, status int, code, msg, hint string) {
 	if hint == "" {
 		writeOpenAIError(w, status, code, msg)

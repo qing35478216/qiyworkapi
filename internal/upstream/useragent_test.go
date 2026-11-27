@@ -48,7 +48,7 @@ func TestUserAgentDefaultEmptyKeepsClientUA(t *testing.T) {
 			call: func(c *Client) error {
 				return c.ReportChatActivity(&auth.Auth{AccessToken: "at", UID: "u1"}, "cid", "")
 			},
-			wantUA: "WorkBuddy/5.5.4",
+			wantUA: "WorkBuddy/5.11.3",
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -160,10 +160,10 @@ func TestFetchModelsUsesConfiguredUA(t *testing.T) {
 // --- A 段：UA 对齐官方 WorkBuddy 三段式 ---
 
 const (
-	defaultUAString      = "WorkBuddy/5.5.4 WorkBuddy/5.5.4 CLI/2.137.1"
+	defaultUAString      = "WorkBuddy/5.11.3 WorkBuddy/5.11.3 CLI/2.176.0"
 	explicitString       = "MyCustomAgent/3.1"
-	clientVerUAString    = "WorkBuddy/6.0.0 WorkBuddy/6.0.0 CLI/2.137.1"
-	billingUAWorkBuddy   = "WorkBuddy/5.5.4"
+	clientVerUAString    = "WorkBuddy/6.0.0 WorkBuddy/6.0.0 CLI/2.176.0"
+	billingUAWorkBuddy   = "WorkBuddy/5.11.3"
 	billingUACustomVer   = "WorkBuddy/6.0.0"
 	billingUAAgentString = "BillingAgent/1"
 )
@@ -323,12 +323,12 @@ func TestBillingUA_WhenClientNameEmpty(t *testing.T) {
 	if ua != "WorkBuddy/6.0.0" {
 		t.Errorf("billing UA = %q want WorkBuddy/6.0.0 (default desktop fingerprint)", ua)
 	}
-	if got := c.billingUA(); got != "WorkBuddy/6.0.0" {
+	if got := c.billingUA(a); got != "WorkBuddy/6.0.0" {
 		t.Errorf("billingUA() = %q want WorkBuddy/6.0.0", got)
 	}
 	// 显式 SaaS 还原旧行为（不设 UA）。
 	c.ClientName = "SaaS"
-	if got := c.billingUA(); got != "" {
+	if got := c.billingUA(a); got != "" {
 		t.Errorf("billingUA() SaaS = %q want empty", got)
 	}
 }
