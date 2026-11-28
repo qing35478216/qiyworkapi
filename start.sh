@@ -1,14 +1,25 @@
 #!/bin/bash
-# 启动 qiyworkapi 服务（前台运行；守护用 run.sh）
+# 前台运行 qiyworkapi（调试用；常驻/重启请用 ./run.sh）
+# 注意：本机 :7863 由 launchd 的 cn.qiyworkapi 常驻占用，前台跑之前先 ./run.sh stop
+set -u
 cd "$(dirname "$0")" || exit 1
 
 export TZ=Asia/Shanghai
-
 mkdir -p auths data logs
 
-if [ ! -f config.json ]; then
+# 真实运行路径优先；仓库内旧构建仅兜底
+BIN=${QIYWORKAPI_BIN:-/Users/qiy/workapi/qiyworkapi}
+[ -x "$BIN" ] || BIN="$PWD/qiyworkapi"
+
+if [ ! -f config.json ] && [ -f config.example.json ]; then
   cp config.example.json config.json
   echo "[start] 已生成 config.json，请确认 api_key"
 fi
 
-exec ./qiyworkapi -config config.json
+if lsof -nP -iTCP:7863 -sTCP:LISTEN >/dev/null 2>&1; then
+  echo "[start] 7863 已被占用（launchd 常驻服务在跑）：先 ./run.sh stop，或直接用 ./run.sh status"
+  exit 1
+fi
+
+echo "[start] 前台运行 $BIN（Ctrl-C 退出）"
+exec "$BIN" -config config.json

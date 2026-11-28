@@ -296,16 +296,28 @@ exe 为**单文件自包含**（前端资源已 embed 进二进制），拷到�
 # 1) 下载 Release 中对应平台的包并解压
 tar xzf qiyworkapi-v<版本>-darwin-arm64.tar.gz && cd qiyworkapi-v<版本>
 
-# 2) 前台启动（Ctrl+C 停止）；或后台常驻：
-./run.sh start          # 后台守护，日志在 logs/server.log
-./run.sh status         # 查看运行状态
+# 2) 前台启动（Ctrl+C 停止）；或交给 launchd 常驻：
+./run.sh start          # 首次会写 plist 并注册，已有则幂等（已在运行不打断）
+./run.sh status         # job 状态 / 二进制 / 端口 / 健康 / 野进程
+./run.sh restart        # 杀掉并原地重启（键：launchctl kickstart -k）
 ./run.sh logs           # 跟踪日志
 
 # 3) 浏览器打开面板添加账号
 #    http://127.0.0.1:7863/panel/
 ```
 
-首次启动自动生成 `config.json`（含随机 `api_key`，日志打印一次）。开机自启：macOS 用仓库自带 `enable-autostart.sh`（launchd 用户级常驻）；Linux 可参照它写 systemd unit。
+首次启动自动生成 `config.json`（含随机 `api_key`，日志打印一次）。
+
+**macOS 上进程只由 launchd（`cn.qiyworkapi`）持有，脚本不自己 nohup。** 手动 `nohup` 起一个实例会占住 `:7863`，launchd 拉起的实例全部 `bind: address already in use` 退出，日志里会出现成对出现的失败启动块。要停就 `./run.sh stop`（等于 `launchctl bootout`，KeepAlive 下唯一可靠停法）。
+
+| 场景 | 命令 |
+|---|---|
+| 改完代码上线 | `./run.sh build && ./run.sh restart` |
+| 开机自启 / 重装 plist | `./run.sh install` |
+| 撤销常驻 | `./run.sh uninstall`（plist 改名停用，不删） |
+| 前台调试 | `./run.sh stop` 后跑 `./start.sh` |
+
+Linux 没有 launchd，可照 plist 写 systemd unit（`Restart=always` 对应 `KeepAlive`）。
 
 > **日志轮转**：`logs/server.log` 会持续增长，长期部署建议配置轮转——
 > Linux 用 logrotate（`/etc/logrotate.d/qiyworkapi`：`weekly` + `rotate 4` + `copytruncate`）；
