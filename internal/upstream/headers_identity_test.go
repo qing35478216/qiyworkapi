@@ -15,8 +15,8 @@ func realmAuth(uid, domain string) *auth.Auth {
 
 // TestChatHeadersIdentityPerRealm 出站身份按 realm 分档（2026-11 官方分发包口径）：
 //
-//	CN  UA WorkBuddy/5.11.3 … CLI/2.176.0，Origin www.workbuddy.cn，
-//	    带 X-Client-Version/Platform/Product 三头（5.11.3 桌面端新增）
+//	CN  UA WorkBuddy/5.12.1 … CLI/2.181.0，Origin www.workbuddy.cn，
+//	    带 X-Client-Version/Platform/Product 三头（5.12.1 桌面端新增）
 //	GL  UA WorkBuddy/5.9.4 workbuddy-ai/5.9.4 CLI/2.165.0，
 //	    不带 X-Client-*（国际包停在 5.9.4，官方从不发这三头）
 func TestChatHeadersIdentityPerRealm(t *testing.T) {
@@ -25,7 +25,7 @@ func TestChatHeadersIdentityPerRealm(t *testing.T) {
 		auth   *auth.Auth
 		wantUA string
 	}{
-		{"cn", realmAuth("u-cn", "copilot.tencent.com"), "WorkBuddy/5.11.3 WorkBuddy/5.11.3 CLI/2.176.0"},
+		{"cn", realmAuth("u-cn", "copilot.tencent.com"), "WorkBuddy/5.12.1 WorkBuddy/5.12.1 CLI/2.181.0"},
 		{"global", realmAuth("u-gl", "www.workbuddy.ai"), "WorkBuddy/5.9.4 workbuddy-ai/5.9.4 CLI/2.165.0"},
 	}
 	for _, tc := range cases {
@@ -51,14 +51,14 @@ func TestChatHeadersIdentityPerRealm(t *testing.T) {
 				if o := got.Get("Origin"); o != "https://www.workbuddy.cn" {
 					t.Errorf("CN Origin = %q want https://www.workbuddy.cn", o)
 				}
-				if got.Get("X-Client-Version") != "5.11.3" ||
-					got.Get("X-Client-Platform") != "windows" ||
+				if got.Get("X-Client-Version") != "5.12.1" ||
+					got.Get("X-Client-Platform") != clientPlatform() ||
 					got.Get("X-Client-Product") != "WorkBuddy" {
 					t.Errorf("CN X-Client-* = %q/%q/%q",
 						got.Get("X-Client-Version"), got.Get("X-Client-Platform"), got.Get("X-Client-Product"))
 				}
-				if v := got.Get("X-IDE-Version"); v != "5.11.3" {
-					t.Errorf("CN X-IDE-Version = %q want 5.11.3", v)
+				if v := got.Get("X-IDE-Version"); v != "5.12.1" {
+					t.Errorf("CN X-IDE-Version = %q want 5.12.1", v)
 				}
 			} else {
 				if o := got.Get("Origin"); o != "https://www.workbuddy.ai" {
@@ -79,7 +79,7 @@ func TestChatHeadersIdentityPerRealm(t *testing.T) {
 // 国内号不能盖国际包的 commit/releaseDate（版本号与安装清单会自相矛盾）。
 func TestDesktopFingerprintPerRealm(t *testing.T) {
 	fp := desktopFingerprint(realmAuth("u-cn", "copilot.tencent.com"))
-	if fp["ideVersion"] != "5.11.3" || fp["commit"] != desktopCommitCN || fp["releaseDate"] != desktopReleaseDateCN {
+	if fp["ideVersion"] != "5.12.1" || fp["commit"] != desktopCommitCN || fp["releaseDate"] != desktopReleaseDateCN {
 		t.Errorf("CN fingerprint = %v/%v/%v", fp["ideVersion"], fp["commit"], fp["releaseDate"])
 	}
 	fp = desktopFingerprint(realmAuth("u-gl", "www.workbuddy.ai"))

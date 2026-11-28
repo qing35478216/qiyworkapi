@@ -8,6 +8,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"net/http"
+	"runtime"
 	"strings"
 	"time"
 
@@ -19,16 +20,16 @@ const (
 	// defaultClientVersionCN / defaultClientVersionGlobal 出站 WorkBuddy 客户端版本段
 	// （UA 的 `<brand>/<ver>` 与 X-IDE-Version）。两版分发包不同档：
 	//
-	//	国内版 WorkBuddy   5.11.3（内置 @genie/agent-cli 2.176.0）
+	//	国内版 WorkBuddy   5.12.1（内置 @genie/agent-cli 2.181.0）
 	//	国际版 WorkBuddy AI 5.9.4（内置 2.165.0）
 	//
 	// 旧实现统一用 5.5.4 / CLI 2.137.1（2026-09 的包），落后两个大版本——版本串会进
 	// 上游风控与用量归因，长期落后等于自报「非官方客户端」。
-	defaultClientVersionCN     = "5.11.3"
+	defaultClientVersionCN     = "5.12.1"
 	defaultClientVersionGlobal = "5.9.4"
 	// defaultCliVersionCN / defaultCliVersionGlobal 出站 UA 的 `CLI/<ver>` 段，
 	// 随各自分发包走（不是全局统一值）。config upstream.cli_version 可覆盖。
-	defaultCliVersionCN     = "2.176.0"
+	defaultCliVersionCN     = "2.181.0"
 	defaultCliVersionGlobal = "2.165.0"
 
 	// originRefererCN 国内版前端域。旧值 codebuddy.cn 是 CodeBuddy CLI 时代遗留；
@@ -38,7 +39,7 @@ const (
 )
 
 // clientVersion 生效的 WorkBuddy 客户端版本：Client.ClientVersion 非空则取之，
-// 否则按 realm 取内置默认（CN 5.11.3 / global 5.9.4）。
+// 否则按 realm 取内置默认（CN 5.12.1 / global 5.9.4）。
 func (c *Client) clientVersion(a *auth.Auth) string {
 	if c != nil && c.ClientVersion != "" {
 		return c.ClientVersion
@@ -50,7 +51,7 @@ func (c *Client) clientVersion(a *auth.Auth) string {
 }
 
 // cliVersion 生效的 CLI 版本：Client.CliVersion 非空则取之，否则按 realm 取内置默认
-// （CN 2.176.0 / global 2.165.0）。
+// （CN 2.181.0 / global 2.165.0）。
 func (c *Client) cliVersion(a *auth.Auth) string {
 	if c != nil && c.CliVersion != "" {
 		return c.CliVersion
@@ -91,7 +92,7 @@ func (c *Client) originRefererFor(a *auth.Auth) string {
 //
 // 首段**恒为驼峰 WorkBuddy**，只有第二段随 realm 换品牌（见 uaBrandFor）：
 //
-//	CN 5.11.3  → WorkBuddy/5.11.3 WorkBuddy/5.11.3 CLI/2.176.0
+//	CN 5.12.1  → WorkBuddy/5.12.1 WorkBuddy/5.12.1 CLI/2.181.0
 //	GL 5.9.4   → WorkBuddy/5.9.4 workbuddy-ai/5.9.4 CLI/2.165.0
 //
 // 旧实现把 global 第二段写成 `WorkBuddy AI`（带空格），官方国际包从不产生该形态。
@@ -109,7 +110,7 @@ func (c *Client) defaultWorkBuddyUA() string {
 // rpcUAFor 桌面端 **RPC/REST 层**出站 UA（/v2/report、/v2/chat/busy、refresh、
 // /v2/as/scheduler/tasks、user-asset 等非 chat SDK 链路）：
 //
-//	CN 5.11.3  → WorkBuddy/5.11.3 WorkBuddy/5.11.3 CLI/2.176.0
+//	CN 5.12.1  → WorkBuddy/5.12.1 WorkBuddy/5.12.1 CLI/2.181.0
 //	GL 5.9.4   → workbuddy-ai/5.9.4 workbuddy-ai/5.9.4 CLI/2.165.0
 //
 // chat 链路首段恒驼峰（SDK buildUserAgent），RPC 族首段即品牌 slug——两族并存，
@@ -238,28 +239,50 @@ func (c *Client) CommonHeaders(req *http.Request, a *auth.Auth) {
 	// injectAccountStableHeaders）。注入在 CommonHeaders——chat 经 ChatHeaders
 	// 叠加 CommonHeaders 天然继承；billing 域另行注入，全出站覆盖。
 	c.injectAccountStableHeaders(req, a)
-	// X-Client-*：5.11.3 桌面端新增的客户端身份三头（仅国内版，见
+	// X-Client-*：桌面端（5.11.3 起）新增的客户端身份三头（仅国内版，见
 	// injectClientIdentityHeaders）。旧网关不发这三头，是 2026-11 起最容易被
 	// 设备侧写识别的一处缺口。
 	c.injectClientIdentityHeaders(req, a)
 }
 
-// injectClientIdentityHeaders 注入 5.11.3 桌面端新增的 X-Client-* 三头。
+// injectClientIdentityHeaders 注入桌面端（5.11.3 起）的 X-Client-* 三头。
 //
 // **只对国内版发，国际版一律不发**：国际分发包停在 5.9.4，app.asar 里没有
 // proxy-env2 的 registerOutboundHeaderProvider，官方国际客户端从不发这三个头。
-// 把国内的 5.11.3 形态套到国际链路，等于给那条链加一层它不存在的指纹。
+// 把国内的 5.12.1 形态套到国际链路，等于给那条链加一层它不存在的指纹。
 //
-// 真机证据（2026-11-18 国内桌面端 5.11.3，130 次命中）：三头恒同现，取值固定
-// 5.11.3 / windows / WorkBuddy；注入点是全局 axios/undici 拦截器，按 origin 判定，
-// 覆盖 chat/completions、/v3/config、report、refresh、billing 全族。
+// 真机证据（2026-11-18 Windows 桌面端抓包 130 次命中，2026-11-28 5.12.1 macOS
+// 包 app.asar 反查一致）：三头恒同现；注入点是全局 axios/undici 拦截器，按 origin
+// 判定，覆盖 chat/completions、/v3/config、report、refresh、billing 全族。
+//
+// 三头取值来源（5.12.1 buildClientIdentityHeaders 逐行核对）：
+//   - X-Client-Version = 包版本（本仓 clientVersion）
+//   - X-Client-Platform = 宿主平台，由 process.platform 推导成 macos/windows/linux
+//     ——**不是固定值**。旧实现硬编码 "windows"（沿自 Windows 抓包），在 macOS/Linux
+//     宿主上就是一层自相矛盾的指纹，故改为按运行平台如实上报。
+//   - X-Client-Product = product.json 的 applicationName（"WorkBuddy"）
 func (c *Client) injectClientIdentityHeaders(req *http.Request, a *auth.Auth) {
 	if a == nil || a.IsGlobal() {
 		return
 	}
 	req.Header.Set("X-Client-Version", c.clientVersion(a))
-	req.Header.Set("X-Client-Platform", "windows")
+	req.Header.Set("X-Client-Platform", clientPlatform())
 	req.Header.Set("X-Client-Product", "WorkBuddy")
+}
+
+// clientPlatform 出站 X-Client-Platform 取值：官方客户端取宿主平台并归一到
+// macos/windows/linux（toWorkbuddyClientPlatform），本网关同样按自己跑在哪上报，
+// 不硬编码成某个平台——版本号、平台、UA 三者自洽才是一套可信的客户端指纹。
+func clientPlatform() string {
+	switch runtime.GOOS {
+	case "darwin":
+		return "macos"
+	case "windows":
+		return "windows"
+	case "linux":
+		return "linux"
+	}
+	return runtime.GOOS
 }
 
 // acceptLanguageFor 按账号 realm 返回 Accept-Language：global → en-US，cn → zh-CN。
@@ -498,7 +521,7 @@ func (c *Client) BillingHeaders(req *http.Request, a *auth.Auth) {
 
 // RefreshHeaders refresh 端点专属头（X-Refresh-Token 只允许出现在这里）。
 //
-// 真机逐头核对（CN 5.11.3，refresh 高频调用，身份错位比登录更频繁暴露）：
+// 真机逐头核对（CN 5.12.1，refresh 高频调用，身份错位比登录更频繁暴露）：
 // Accept 用宽松值（不是 CommonHeaders 的 application/json）、X-Product: SaaS、
 // 旧 access token 与 X-Refresh-Token **同时**携带（与 chat 相反）、
 // X-Request-ID / X-User-Id / X-Domain 齐全；无 AT 时发 X-No-Authorization 哨兵。

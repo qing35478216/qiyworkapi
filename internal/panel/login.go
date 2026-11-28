@@ -167,7 +167,7 @@ func (p *Panel) loginStart(w http.ResponseWriter, r *http.Request) {
 
 	site := loginsite.For(realm)
 	epState, _, _, _ := site.Endpoints()
-	data, status, err := doJSON(http.MethodPost, epState, site.StateHeaders(loginsite.DeviceToken()), "", bytes.NewReader([]byte("{}")))
+	data, status, err := doJSON(http.MethodPost, epState, site.StateHeaders(loginsite.DeviceToken(), loginsite.DeviceIDList(loginsite.Qimei36())), "", bytes.NewReader([]byte("{}")))
 	if err != nil {
 		writeErr(w, http.StatusBadGateway, fmt.Sprintf("auth state (upstream %d): %v", status, err))
 		return

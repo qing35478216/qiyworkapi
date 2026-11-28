@@ -52,10 +52,10 @@ func TestLoginEndpoints(t *testing.T) {
 // 且不发 Origin/Referer/X-Requested-With（那是浏览器语义，桌面端 node fetch 不发）。
 func TestLoginHeaders(t *testing.T) {
 	cn := loginsite.For("cn")
-	if ua := cn.UserAgent; ua != "WorkBuddy/5.11.3 WorkBuddy/5.11.3 CLI/2.176.0" {
+	if ua := cn.UserAgent; ua != "WorkBuddy/5.12.1 WorkBuddy/5.12.1 CLI/2.181.0" {
 		t.Errorf("cn login UA = %q", ua)
 	}
-	h := cn.StateHeaders("")
+	h := cn.StateHeaders("", "")
 	if h["X-Domain"] != "www.workbuddy.cn" {
 		t.Errorf("cn X-Domain = %q want www.workbuddy.cn", h["X-Domain"])
 	}
@@ -65,7 +65,7 @@ func TestLoginHeaders(t *testing.T) {
 	if _, ok := h["X-Device-Token"]; ok {
 		t.Errorf("empty device token must not be sent (不伪造设备指纹)")
 	}
-	if got := cn.StateHeaders("v3:abc"); got["X-Device-Token"] != "v3:abc" {
+	if got := cn.StateHeaders("v3:abc", ""); got["X-Device-Token"] != "v3:abc" {
 		t.Errorf("device token not injected: %v", got)
 	}
 	if h["X-No-Authorization"] != "true" || h["X-No-User-Id"] != "true" {
@@ -96,8 +96,8 @@ func TestLoginHeaders(t *testing.T) {
 	if ua := gl.UserAgent; ua != "workbuddy-ai/5.9.4 workbuddy-ai/5.9.4 CLI/2.165.0" {
 		t.Errorf("global login UA = %q", ua)
 	}
-	if gl.StateHeaders("")["X-Domain"] != "www.workbuddy.ai" {
-		t.Errorf("global X-Domain = %q", gl.StateHeaders("")["X-Domain"])
+	if gl.StateHeaders("", "")["X-Domain"] != "www.workbuddy.ai" {
+		t.Errorf("global X-Domain = %q", gl.StateHeaders("", "")["X-Domain"])
 	}
 	if got := gl.AccountHeaders("at"); got["Authorization"] != "Bearer at" {
 		t.Errorf("account headers must carry bearer, got %v", got)

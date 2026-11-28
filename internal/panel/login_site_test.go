@@ -58,7 +58,7 @@ func TestLoginStartCNURLAndHeaders(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(resp.URL, "version=5.11.3") || !strings.Contains(resp.URL, "loginSessionId=") {
+	if !strings.Contains(resp.URL, "version=5.12.1") || !strings.Contains(resp.URL, "loginSessionId=") {
 		t.Errorf("cn auth url missing version/loginSessionId: %s", resp.URL)
 	}
 	if resp.Realm != "cn" {

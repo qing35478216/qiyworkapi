@@ -16,7 +16,7 @@ func TestDecorateAuthURL(t *testing.T) {
 
 	raw := "https://www.workbuddy.cn/login?platform=workbuddy&state=abc"
 	got := DecorateAuthURL(raw, cn, "", "sess-1")
-	want := raw + "&version=5.11.3&loginSessionId=sess-1"
+	want := raw + "&version=5.12.1&loginSessionId=sess-1"
 	if got != want {
 		t.Errorf("cn decorate = %q want %q", got, want)
 	}
@@ -42,7 +42,7 @@ func TestDecorateAuthURL(t *testing.T) {
 	}
 	// 无 ? 的 URL 用 ? 起头。
 	bare := DecorateAuthURL("https://www.workbuddy.cn/login", cn, "", "")
-	if !strings.HasPrefix(bare, "https://www.workbuddy.cn/login?version=5.11.3") {
+	if !strings.HasPrefix(bare, "https://www.workbuddy.cn/login?version=5.12.1") {
 		t.Errorf("bare url decorate = %q", bare)
 	}
 	// 空串/非法 URL 原样返回。
@@ -121,5 +121,39 @@ func TestEnvelopeErrorString(t *testing.T) {
 	}
 	if got := (&EnvelopeError{Status: 502}).Error(); got != "http_error: upstream 502" {
 		t.Errorf("http error = %q", got)
+	}
+}
+
+// TestStateHeadersDeviceIDList 5.12.1 桌面端新增的 X-Device-Id-List：
+// 有 qimei36 才发（JSON 串形态），空则不发明文空头。
+func TestStateHeadersDeviceIDList(t *testing.T) {
+	cn := For("cn")
+	if h := cn.StateHeaders("", ""); h["X-Device-Id-List"] != "" {
+		t.Errorf("empty device id list must not be sent, got %q", h["X-Device-Id-List"])
+	}
+	list := DeviceIDList("a2c23a2621cdd970b5c6921220001231aa0f")
+	if list != `{"qimei36":"a2c23a2621cdd970b5c6921220001231aa0f"}` {
+		t.Errorf("device id list = %q", list)
+	}
+	if h := cn.StateHeaders("tok", list); h["X-Device-Id-List"] != list {
+		t.Errorf("X-Device-Id-List = %q want %q", h["X-Device-Id-List"], list)
+	}
+	// qimei 为空 → 空串（不发头）。
+	if got := DeviceIDList("  "); got != "" {
+		t.Errorf("blank qimei should yield empty list, got %q", got)
+	}
+}
+
+// TestQimei36Env 环境变量优先级最高；空值/无缓存文件返回空串（绝不编造）。
+func TestQimei36Env(t *testing.T) {
+	t.Setenv("CODEBUDDY_QIMEI36", "")
+	t.Setenv("QIYWORKAPI_QIMEI36", " a2c23a2621cdd970b5c6921220001231aa0f ")
+	if got := Qimei36(); got != "a2c23a2621cdd970b5c6921220001231aa0f" {
+		t.Errorf("env qimei = %q", got)
+	}
+	t.Setenv("QIYWORKAPI_QIMEI36", "")
+	// 不依赖宿主是否真有 ~/.workbuddy/qimei-cache.json：只断言不 panic、值要么空要么 36 hex。
+	if got := Qimei36(); got != "" && len(got) != 36 {
+		t.Errorf("cached qimei = %q (want empty or 36 hex)", got)
 	}
 }

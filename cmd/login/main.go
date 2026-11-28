@@ -230,7 +230,7 @@ func runURL(realm, statePath string, client *http.Client, out io.Writer) {
 	ensureLoginAllowed()
 	site := loginsite.For(realm)
 	epState, _, _, _ := site.Endpoints()
-	data, _, err := doJSON(client, http.MethodPost, epState, site.StateHeaders(loginsite.DeviceToken()), bytes.NewReader([]byte("{}")))
+	data, _, err := doJSON(client, http.MethodPost, epState, site.StateHeaders(loginsite.DeviceToken(), loginsite.DeviceIDList(loginsite.Qimei36())), bytes.NewReader([]byte("{}")))
 	if err != nil {
 		fatal("auth state failed: %v", err)
 	}

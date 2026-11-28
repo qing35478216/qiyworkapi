@@ -1,11 +1,11 @@
-// desktop.go 桌面客户端（WorkBuddy Desktop，CN 5.11.3 / global 5.9.4）行为指纹上报。
+// desktop.go 桌面客户端（WorkBuddy Desktop，CN 5.12.1 / global 5.9.4）行为指纹上报。
 //
 // 来源：2026-09-12 Sunny 抓包实测（data/desktop-task-protocol.md）。桌面端点亮
 // 「需电脑端」类任务的关键不是独立端点，而是同一 POST /v2/report 通道上
 // **不同的客户端指纹**：
 //
 //	POST https://copilot.tencent.com/v2/report        ← chatBase（CLI 上报走 billingBase）
-//	User-Agent: WorkBuddy/5.11.3 WorkBuddy/5.11.3 CLI/2.176.0
+//	User-Agent: WorkBuddy/5.12.1 WorkBuddy/5.12.1 CLI/2.181.0
 //	X-Domain: copilot.tencent.com, X-Product: SaaS, X-User-Id: <uid>
 //	Body: [ {...event...} ]                           ← 数组
 //
@@ -31,6 +31,7 @@ import (
 	"net/http"
 	"os"
 	"regexp"
+	"runtime"
 	"time"
 
 	"github.com/qing35478216/qiyworkapi/internal/auth"
@@ -45,12 +46,15 @@ const (
 // 两个分发包的 commit 与 releaseDate 是打包期常量，无法从版本号推导；混用等于
 // 给国内号盖国际包的指纹（版本号与安装清单自相矛盾），是最易被设备侧写识破的一处。
 //
+// 取值来自官方客户端自己上报的遥测（不是猜的）：
+//
+//	CN 5.12.1  commit cb16190f…  releaseDate 1795706679794（2026-11-26T15:24:39.794Z）
 //	CN 5.11.3  commit ecace0f7…  releaseDate 1794502169764（2026-11-12T16:49:29.764Z）
 //	GL 5.9.4   commit fa0a0901…  releaseDate 1793288804029（2026-10-29T15:46:44.029Z）
 const (
-	desktopVersionCN         = "5.11.3"
-	desktopCommitCN          = "ecace0f7028166695994300182295329b8b95449"
-	desktopReleaseDateCN     = int64(1794502169764)
+	desktopVersionCN         = "5.12.1"
+	desktopCommitCN          = "cb16190f24b8c0c7b518ecea450d5eaf027e072e"
+	desktopReleaseDateCN     = int64(1795706679794)
 	desktopVersionGlobal     = "5.9.4"
 	desktopCommitGlobal      = "fa0a0901906addaa1a4259f6df347388a5563ded"
 	desktopReleaseDateGlobal = int64(1793288804029)
@@ -77,11 +81,54 @@ func deriveID(a *auth.Auth, salt string) string {
 // DesktopEvent 桌面端事件：业务字段任意（map），公共指纹由 ReportDesktopEvent 注入。
 type DesktopEvent map[string]any
 
+// desktopHostFingerprint 上报载荷里的宿主环境字段（os/arch/osVersion/cpu*）。
+// 真机取值随宿主平台变，不是常量：
+//
+//	macOS 5.12.1 实测  os=darwin  arch=arm64  osVersion=24.6.0  cpuModel=Apple M1 Pro
+//	Windows 抓包实测   os=win32   arch=x64    osVersion=10.0.26220  cpuCores=20 memorySize=24
+//
+// 按本进程实际平台选择：版本号说是哪个包、载荷就该报对应平台，否则「macOS 包 +
+// win32 载荷」是一眼假的自相矛盾。取不到真值就少报，不编造。
+func desktopHostFingerprint() map[string]any {
+	switch runtime.GOOS {
+	case "darwin":
+		return map[string]any{
+			"os":         "darwin",
+			"arch":       hostArch(),
+			"osVersion":  "24.6.0", // macOS 15.x（真机 5.12.1 上报值）
+			"cpuModel":   "Apple M1 Pro",
+			"cpuCores":   10,
+			"memorySize": 32,
+		}
+	case "windows":
+		return map[string]any{
+			"os":         "win32",
+			"arch":       "x64",
+			"osVersion":  "10.0.26220",
+			"cpuCores":   20,
+			"memorySize": 24,
+		}
+	}
+	// linux 等：只报能确定的 os/arch，osVersion/cpu 缺省不编造。
+	return map[string]any{"os": runtime.GOOS, "arch": hostArch()}
+}
+
+// hostArch 上报载荷的 arch 字段（GOARCH → 真机拼写）。
+func hostArch() string {
+	switch runtime.GOARCH {
+	case "amd64":
+		return "x64"
+	case "arm64":
+		return "arm64"
+	}
+	return runtime.GOARCH
+}
+
 // desktopFingerprint 公共桌面指纹字段（注入每个事件，覆盖同名业务键）。
 func desktopFingerprint(a *auth.Auth) map[string]any {
 	now := time.Now().UnixMilli()
 	ver, commit, releaseDate := desktopIdentity(a)
-	return map[string]any{
+	fp := map[string]any{
 		"timezone":     "Asia/Shanghai",
 		"reportDelay":  2000,
 		"userId":       a.UID,
@@ -97,14 +144,13 @@ func desktopFingerprint(a *auth.Auth) map[string]any {
 		"sessionId":    deriveID(a, "session"),
 		"extName":      "workbuddy-desktop",
 		"extVersion":   ver,
-		"os":           "win32",
-		"arch":         "x64",
-		"osVersion":    "10.0.26220",
-		"cpuCores":     20,
-		"memorySize":   24,
 		"timestamp":    now,
 		"presentAt":    now,
 	}
+	for k, v := range desktopHostFingerprint() {
+		fp[k] = v
+	}
+	return fp
 }
 
 // ReportDesktopEvent 以桌面客户端指纹向 copilot.tencent.com/v2/report 批量上报事件。

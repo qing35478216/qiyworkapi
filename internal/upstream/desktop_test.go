@@ -5,6 +5,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"runtime"
 	"testing"
 
 	"github.com/qing35478216/qiyworkapi/internal/auth"
@@ -40,7 +41,7 @@ func TestReportDesktopEventFingerprint(t *testing.T) {
 	if err != nil {
 		t.Fatalf("report desktop: %v", err)
 	}
-	if gotUA != "WorkBuddy/5.11.3 WorkBuddy/5.11.3 CLI/2.176.0" {
+	if gotUA != "WorkBuddy/5.12.1 WorkBuddy/5.12.1 CLI/2.181.0" {
 		t.Errorf("UA=%q want CN desktop RPC UA", gotUA)
 	}
 	if len(got) != 1 {
@@ -102,7 +103,7 @@ func TestSetAppearanceTheme(t *testing.T) {
 		if r.URL.Path != "/v2/user-asset/appearance/set" {
 			t.Errorf("path=%s want /v2/user-asset/appearance/set", r.URL.Path)
 		}
-		if r.Header.Get("User-Agent") != "WorkBuddy/5.11.3 WorkBuddy/5.11.3 CLI/2.176.0" {
+		if r.Header.Get("User-Agent") != "WorkBuddy/5.12.1 WorkBuddy/5.12.1 CLI/2.181.0" {
 			t.Errorf("UA=%q want CN desktop RPC UA", r.Header.Get("User-Agent"))
 		}
 		raw, _ := io.ReadAll(r.Body)
@@ -117,5 +118,28 @@ func TestSetAppearanceTheme(t *testing.T) {
 	}
 	if got["kind"] != "theme" || got["resource_key"] != "theme-tkmw7j" {
 		t.Errorf("body=%v want kind=theme resource_key=theme-tkmw7j", got)
+	}
+}
+
+// TestDesktopHostFingerprint 上报载荷的宿主字段随运行平台走：macOS 包不能报 win32。
+func TestDesktopHostFingerprint(t *testing.T) {
+	fp := desktopHostFingerprint()
+	switch runtime.GOOS {
+	case "darwin":
+		if fp["os"] != "darwin" || fp["arch"] != hostArch() || fp["osVersion"] != "24.6.0" {
+			t.Errorf("darwin fingerprint = %v", fp)
+		}
+		if fp["cpuModel"] != "Apple M1 Pro" {
+			t.Errorf("darwin cpuModel = %v want Apple M1 Pro", fp["cpuModel"])
+		}
+	case "windows":
+		if fp["os"] != "win32" || fp["arch"] != "x64" {
+			t.Errorf("windows fingerprint = %v", fp)
+		}
+	}
+	// 合并进公共指纹后 os/arch 必须来自宿主，且不残留 win32 硬编码。
+	full := desktopFingerprint(&auth.Auth{UID: "u1"})
+	if full["os"] != fp["os"] || full["arch"] != fp["arch"] {
+		t.Errorf("merged fingerprint os/arch = %v/%v want %v/%v", full["os"], full["arch"], fp["os"], fp["arch"])
 	}
 }

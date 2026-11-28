@@ -7,8 +7,8 @@
 //
 // 口径来源（2026-11 上游真机抓包，与社区同源分支逐头核对）：
 //
-//	CN 5.11.3  POST /v2/plugin/auth/state?platform=workbuddy
-//	           UA: WorkBuddy/5.11.3 WorkBuddy/5.11.3 CLI/2.176.0
+//	CN 5.12.1  POST /v2/plugin/auth/state?platform=workbuddy
+//	           UA: WorkBuddy/5.12.1 WorkBuddy/5.12.1 CLI/2.181.0
 //	           x-domain: www.workbuddy.cn（请求实际打到 copilot.tencent.com）
 //	GL 5.9.4   POST /v2/plugin/auth/state?platform=workbuddy-ai
 //	           UA: workbuddy-ai/5.9.4 workbuddy-ai/5.9.4 CLI/2.165.0
@@ -19,6 +19,10 @@
 // X-Domain**；login/account 有 X-Domain + Bearer + 三个 x-no-*（无 X-No-Authorization）。
 // 旧实现把三者抹平（全带 X-Domain、state 缺 channel id），是逐头比对能一眼看出的差异。
 //
+// 5.12.1（2026-11-26 发布）在 auth/state 上再加两处可选设备指纹：
+// X-Device-Token（Turing token，本仓取部署侧导出值）与
+// X-Device-Id-List（{"qimei36":"…"}，取宿主桌面端落盘值）——都只在拿到真值时才发。
+//
 // 旧实现还发 `?platform=CLI` + `CLI/2.63.2 CodeBuddy/2.63.2`（CodeBuddy IDE 时代的串，
 // WorkBuddy 分发包里根本不存在），并给三条 node-fetch 语义的端点盖上 Origin/Referer/
 // X-Requested-With 的浏览器痕迹——这是登录环节最显眼的非官方指纹。
@@ -27,21 +31,23 @@ package loginsite
 import (
 	cryptorand "crypto/rand"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"net/url"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 )
 
 // 官方版本常量（随分发包走，两版不同档）。
 //
-//	国内版 WorkBuddy 5.11.3（内置 @genie/agent-cli 2.176.0）
+//	国内版 WorkBuddy 5.12.1（内置 @genie/agent-cli 2.181.0）
 //	国际版 WorkBuddy AI 5.9.4（内置 2.165.0）
 const (
-	ClientVersionCN     = "5.11.3"
+	ClientVersionCN     = "5.12.1"
 	ClientVersionGlobal = "5.9.4"
-	BuiltinCLICN        = "2.176.0"
+	BuiltinCLICN        = "2.181.0"
 	BuiltinCLIGlobal    = "2.165.0"
 )
 
@@ -160,10 +166,11 @@ func sentinelNo(noAuth bool) map[string]string {
 
 // StateHeaders auth/state（POST，未鉴权）出站头。
 //
-// 真机（CN 5.11.3 / GL 5.9.4 同形）：公共头 + Content-Type + X-Domain +
+// 真机（CN 5.12.1 / GL 5.9.4 同形）：公共头 + Content-Type + X-Domain +
 // X-Custom-Channel-Id: unknown + 四个 x-no-*；deviceToken 非空才追加 X-Device-Token
 // （qimei 设备风控 token，本仓无法生成，取部署侧导出值，绝不伪造）。
-func (s Site) StateHeaders(deviceToken string) map[string]string {
+// deviceIDList 非空才追加 X-Device-Id-List（5.12.1 桌面端新增，见 DeviceIDList）。
+func (s Site) StateHeaders(deviceToken, deviceIDList string) map[string]string {
 	h := s.baseHeaders()
 	h["Content-Type"] = "application/json"
 	h["X-Domain"] = s.Domain
@@ -174,6 +181,9 @@ func (s Site) StateHeaders(deviceToken string) map[string]string {
 	}
 	if deviceToken = strings.TrimSpace(deviceToken); deviceToken != "" {
 		h["X-Device-Token"] = deviceToken
+	}
+	if deviceIDList = strings.TrimSpace(deviceIDList); deviceIDList != "" {
+		h["X-Device-Id-List"] = deviceIDList
 	}
 	return h
 }
@@ -283,9 +293,54 @@ func DeviceNonce() string {
 	return ""
 }
 
+// Qimei36 真机设备指纹 qimei36（36 hex）。auth/state 的 X-Device-Id-List 取它。
+//
+// 取值来源（按优先级）：环境变量 → 桌面端落盘缓存（~/.workbuddy/qimei-cache.json）。
+// 桌面端同一台机器上该值是稳定的，直接复用宿主导出的真值；取不到返回空串
+// （调用方不发 X-Device-Id-List），绝不随机编一个——假 qimei 比缺头更容易被识别。
+func Qimei36() string {
+	for _, k := range []string{"CODEBUDDY_QIMEI36", "QIYWORKAPI_QIMEI36"} {
+		if v := strings.TrimSpace(os.Getenv(k)); v != "" {
+			return v
+		}
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return ""
+	}
+	raw, err := os.ReadFile(filepath.Join(home, ".workbuddy", "qimei-cache.json"))
+	if err != nil {
+		return ""
+	}
+	var cache struct {
+		Qimei36 string `json:"qimei36"`
+	}
+	if json.Unmarshal(raw, &cache) != nil {
+		return ""
+	}
+	return strings.TrimSpace(cache.Qimei36)
+}
+
+// DeviceIDList 组装 auth/state 的 X-Device-Id-List 头值（5.12.1 桌面端新增）。
+//
+// 真机形态是 JSON 串：{"qimei36":"<36hex>"}；带应用宝渠道归因时再追加
+// {"clickId":"…","mediaCode":"yyb"}。本仓只报 qimei36（有真值才报）。
+// qimei 为空 → 空串（调用方不发该头）。
+func DeviceIDList(qimei36 string) string {
+	q := strings.TrimSpace(qimei36)
+	if q == "" {
+		return ""
+	}
+	b, err := json.Marshal(map[string]string{"qimei36": q})
+	if err != nil {
+		return ""
+	}
+	return string(b)
+}
+
 // DecorateAuthURL 按真机实测补齐授权链接参数（对齐官方 appendAuthUrlParams 系列）：
 //
-//	version=<site.Version>  官方写自己的包版本（CN 5.11.3 / GL 5.9.4，与 UA 同源）。
+//	version=<site.Version>  官方写自己的包版本（CN 5.12.1 / GL 5.9.4，与 UA 同源）。
 //	                        授权页会把它转给 console/auth/risk-context 并编进回调，
 //	                        缺失时页面按旧客户端渲染，是登录环节的版本指纹。
 //	loginSessionId=<uuid>   官方客户端本地生成的登录会话标识，**只对
