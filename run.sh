@@ -24,7 +24,7 @@ PORT=7863
 LOG_FILE="$REPO/logs/server.log"
 PID_FILE="$REPO/data/qiyworkapi.pid"
 
-# 真实运行路径优先；仓库里那个 ./qiyworkapi 是 10 月的旧构建，不能作为默认
+# 真实运行路径优先（仓库内旧构建已于 2026-11-28 清理，这里只留兜底分支）
 BIN=${QIYWORKAPI_BIN:-/Users/qiy/workapi/qiyworkapi}
 [ -x "$BIN" ] || BIN="$REPO/qiyworkapi"
 
@@ -139,6 +139,10 @@ wait_ready() {
 
 # ---- 子命令 ----------------------------------------------------------------
 cmd_start() {
+  if [ ! -x "$BIN" ]; then
+    say "FAIL: 二进制不存在（$BIN），先跑 ./run.sh build"
+    return 1
+  fi
   if [ "$(job_state)" = "running" ] && [ "$(health)" = "200" ]; then
     say "已在运行（launchd pid=$(job_pid)），无需操作"
     return 0

@@ -7,9 +7,10 @@ cd "$(dirname "$0")" || exit 1
 export TZ=Asia/Shanghai
 mkdir -p auths data logs
 
-# 真实运行路径优先；仓库内旧构建仅兜底
+# 真实运行路径优先（仓库内旧构建已于 2026-11-28 清理）
 BIN=${QIYWORKAPI_BIN:-/Users/qiy/workapi/qiyworkapi}
 [ -x "$BIN" ] || BIN="$PWD/qiyworkapi"
+[ -x "$BIN" ] || { echo "[start] 找不到二进制：$BIN（先 ./run.sh build）"; exit 1; }
 
 if [ ! -f config.json ] && [ -f config.example.json ]; then
   cp config.example.json config.json
